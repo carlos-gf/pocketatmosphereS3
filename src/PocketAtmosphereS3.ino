@@ -106,6 +106,16 @@ static void textMid(int cx, int y, const char *s, uint16_t col, uint8_t size) {
 // siguiente cuadro); en los demas cuadros es una flecha (volver al campo).
 #define CORNER 44
 
+static void drawNextCorner(uint16_t col) {
+  // flecha a la derecha, esquina superior derecha de las pantallas secundarias
+  int x = LCD_WIDTH - 32;
+  for (int i = 0; i < 8; i++) gfx->drawFastHLine(x + 10 - i, 20 - i, 1, col);
+  for (int i = 0; i < 8; i++) gfx->drawFastHLine(x + 10 - i, 20 + i, 1, col);
+  gfx->drawFastHLine(x - 6, 20, 18, col);
+}
+
+static bool inNextCorner(int x, int y) { return x > LCD_WIDTH - CORNER && y < CORNER; }
+
 static void drawCorner(uint16_t col, bool back) {
   if (back) {
     // flecha a la izquierda
@@ -124,6 +134,12 @@ static void drawBattery(int x, int y, uint16_t col) {
   gfx->drawRect(x, y, 18, 9, col);
   gfx->fillRect(x + 18, y + 3, 2, 3, col);
   gfx->fillRect(x + 2, y + 2, (16 * pct) / 100, 5, col);
+  if (boardCharging()) {
+    // un rayo dentro de la pila: se esta llenando
+    gfx->fillRect(x + 9, y + 1, 2, 4, col ^ 0xFFFF);
+    gfx->fillRect(x + 7, y + 4, 2, 4, col ^ 0xFFFF);
+    gfx->drawFastHLine(x + 8, y + 4, 3, col ^ 0xFFFF);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +167,7 @@ static void renderField(uint32_t now) {
 
   if (!hud) return;
 
-  textAt(10, 10, ATMOS_NUMERAL[fs.atmos], ink, 2);
+  textAt(CORNER + 6, 12, ATMOS_NUMERAL[fs.atmos], ink, 2);
   drawBattery(LCD_WIDTH - 30, 12, ink);
 
   // barra de profundidad: linea fina abajo, llena hasta el valor actual
@@ -192,6 +208,7 @@ static void renderNames() {
   snprintf(h, sizeof h, "NAMED  %s", ATMOS_NUMERAL[fs.atmos]);
   textMid(LCD_WIDTH / 2, 16, h, ink, 2);
   drawCorner(ink, true);
+  drawNextCorner(ink);
 
   uint8_t n = storeNameCount(fs.atmos);
   if (n == 0) {
@@ -225,6 +242,7 @@ static void renderBand() {
   gfx->fillScreen(bg);
   textMid(LCD_WIDTH / 2, 16, "YOUR BAND", ink, 2);
   drawCorner(ink, true);
+  drawNextCorner(ink);
   textMid(LCD_WIDTH / 2, 40, "where you settle", ink, 1);
 
   const uint32_t *b = storeBand();
@@ -278,6 +296,7 @@ static void renderIndex() {
   gfx->fillScreen(bg);
   textMid(LCD_WIDTH / 2, 16, "SIX FIELDS", ink, 2);
   drawCorner(ink, true);
+  drawNextCorner(ink);
 
   for (int i = 0; i < ATMOS_COUNT; i++) {
     int c = i % IDX_COLS, r = i / IDX_COLS;
@@ -301,9 +320,10 @@ static void renderIndex() {
 
 struct Row { int y; const char *label; };
 static const Row SET_ROWS[] = {
-  { 48, "hour" }, { 76, "minute" }, { 104, "sound" }, { 132, "reveal source" }, { 160, "brightness" },
+  { 44, "hour" }, { 68, "minute" }, { 92, "sound" }, { 116, "vibration" },
+  { 140, "reveal source" }, { 164, "brightness" },
 };
-#define SET_N 5
+#define SET_N 6
 static int setHour = 12, setMin = 0;
 
 static void renderSettings() {
@@ -311,6 +331,7 @@ static void renderSettings() {
   gfx->fillScreen(bg);
   textMid(LCD_WIDTH / 2, 16, "SETTINGS", ink, 2);
   drawCorner(ink, true);
+  drawNextCorner(ink);
 
   Settings &st = storeSettings();
   char v[24];
@@ -320,7 +341,8 @@ static void renderSettings() {
       case 0: snprintf(v, sizeof v, "%02d", setHour); break;
       case 1: snprintf(v, sizeof v, "%02d", setMin); break;
       case 2: snprintf(v, sizeof v, "%s", st.sound ? "on" : "off"); break;
-      case 3: snprintf(v, sizeof v, "%s", st.reveal ? "on" : "off"); break;
+      case 3: snprintf(v, sizeof v, "%s", st.haptics ? "on" : "off"); break;
+      case 4: snprintf(v, sizeof v, "%s", st.reveal ? "on" : "off"); break;
       default: snprintf(v, sizeof v, "%u", (unsigned)st.bright); break;
     }
     textAt(200, SET_ROWS[i].y, v, ink, 1);
@@ -329,23 +351,24 @@ static void renderSettings() {
     gfx->drawRect(246, SET_ROWS[i].y - 6, 20, 20, ink);
     textAt(252, SET_ROWS[i].y, "+", ink, 1);
   }
-  textMid(LCD_WIDTH / 2, 196, "USB: type DUMP for data", ink, 1);
+  textMid(LCD_WIDTH / 2, 194, "USB: DUMP  BAND  TEST  RING <gpio>", ink, 1);
   char fw[32];
   snprintf(fw, sizeof fw, "Pocket Atmosphere v%s", FW_VERSION);
-  textMid(LCD_WIDTH / 2, 216, fw, ink, 1);
+  textMid(LCD_WIDTH / 2, 212, fw, ink, 1);
 }
 
 static void settingsTap(int16_t x, int16_t y) {
   Settings &st = storeSettings();
   for (int i = 0; i < SET_N; i++) {
     if (y < SET_ROWS[i].y - 8 || y > SET_ROWS[i].y + 16) continue;
-    int dir = (x >= 190) ? +1 : (x <= 146 && x >= 114) ? -1 : 0;
+    int dir = (x >= 240) ? +1 : (x >= 164 && x <= 196) ? -1 : 0;
     if (!dir) return;
     switch (i) {
       case 0: setHour = (setHour + dir + 24) % 24; break;
       case 1: setMin = (setMin + dir + 60) % 60; break;
-      case 2: st.sound = !st.sound; buzzSetEnabled(st.sound); hapticSetEnabled(st.sound); break;
-      case 3: st.reveal = !st.reveal; break;
+      case 2: st.sound = !st.sound; buzzSetEnabled(st.sound); break;
+      case 3: st.haptics = !st.haptics; hapticSetEnabled(st.haptics); break;
+      case 4: st.reveal = !st.reveal; break;
       default:
         st.bright = (uint8_t)constrain((int)st.bright + dir * 15, 20, 255);
         boardBrightness(st.bright);
@@ -489,6 +512,9 @@ static void handleTouch(uint32_t now) {
     uint32_t dt = now - gStart;
     bool tap = (dt < 500 && abs(dx) < 14 && abs(dy) < 14);
 
+    // Esquina izquierda: en el campo abre la primera pantalla, en las demas
+    // vuelve al campo (y cancela el teclado). Esquina derecha: sigue el ciclo.
+    // Con solo la izquierda, BAND / SIX FIELDS / SETTINGS eran inalcanzables.
     if (tap && !gLongFired && inCorner(gxl, gyl)) {
       if (mode == M_FIELD) {
         nextMode();
@@ -498,6 +524,11 @@ static void handleTouch(uint32_t now) {
         buzzPing(660, 30);
       }
       showDepthBig = false;
+      touchDown = down;
+      return;
+    }
+    if (tap && mode != M_FIELD && mode != M_KEY && inNextCorner(gxl, gyl)) {
+      nextMode();
       touchDown = down;
       return;
     }
@@ -605,6 +636,14 @@ static void updateAgitation(uint32_t now) {
   float target = jerk * 3.4f;
   if (target > 1.0f) target = 1.0f;
   fs.agitation += (target - fs.agitation) * (target > fs.agitation ? 0.35f : 0.02f);
+
+  // Sostenido por alguien, el acelerometro nunca se queda del todo quieto.
+  // Sobre la mesa, si. Es una diferencia pequena y muy fiable, y decide si los
+  // pulsos pueden permitirse ser largos: si no hay nadie, no hay a quien
+  // acompanar.
+  static float micro = 0.0f;
+  micro += (jerk - micro) * 0.05f;
+  hapticSetHeld(micro > 0.004f);
 }
 
 static void updateDaylight(uint32_t now) {
@@ -649,6 +688,27 @@ static void handleSerial() {
     for (int a = 0; a < ATMOS_COUNT; a++)
       Serial.printf("%s,%s\n", ATMOS_NUMERAL[a], ATMOS[a].source);
     Serial.println("END");
+  } else if (line == "TEST") {
+    Serial.println("-- speaker --");
+    buzzSelfTest([](const char *m) { Serial.println(m); });
+    Serial.println("-- haptic --");
+    Serial.printf("motor on GPIO %d\n", HAPTIC_PIN);
+    for (int i = 1; i <= 3; i++) { hapticPulse(i / 3.0f, 500); delay(900); hapticUpdate(millis()); }
+    Serial.println("-- ring --");
+    Serial.printf("ring on GPIO %d, white for 2 s\n", ringPin());
+    ringSelfTest(2000);
+    Serial.println("END");
+  } else if (line.startsWith("RING ")) {
+    // RING <gpio> [count] : vuelve a montar el anillo y lo enciende en blanco.
+    // Sirve para probar pines y cableado sin recompilar.
+    int sp = line.indexOf(' ', 5);
+    int pin = line.substring(5, sp < 0 ? line.length() : sp).toInt();
+    int cnt = sp < 0 ? 12 : line.substring(sp + 1).toInt();
+    if (cnt < 1) cnt = 12;
+    ringRewire((uint8_t)pin, (uint8_t)cnt);
+    Serial.printf("ring -> GPIO %d, %d leds, white for 2 s\n", pin, cnt);
+    ringSelfTest(2000);
+    Serial.println("END");
   } else if (line == "RESET") {
     for (int a = 0; a < ATMOS_COUNT; a++) storeClearNames(a);
     Serial.println("OK names cleared");
@@ -688,7 +748,7 @@ void setup() {
   buzzBegin();
   buzzSetEnabled(storeSettings().sound);
   hapticBegin();
-  hapticSetEnabled(storeSettings().sound);
+  hapticSetEnabled(storeSettings().haptics);
   ringBegin(12);              // cambia el numero si tu anillo tiene otro
 
   imuOk = M5.Imu.isEnabled();

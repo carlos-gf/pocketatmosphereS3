@@ -40,12 +40,24 @@ Installing *without* erasing keeps the words and dwell log already collected.
 | swipe sideways | next field — each remembers its own depth |
 | tap | show or hide the readout |
 | hold about a second | name what you're looking at |
-| top-left corner | ≡ on the field goes to the next screen; ← anywhere else returns to the field (and cancels naming) |
+| top-left corner | ≡ on the field opens the screens; ← anywhere else returns to the field (and cancels naming) |
+| top-right corner | → on any screen continues the cycle: names, band, fields, settings |
 | left button, hold ~1.5 s | power off properly |
 
-Over USB at 115200 baud: `DUMP` for the words as CSV, `BAND` for the dwell
-histogram, `SOURCES` if you really want to know where the fields came from,
-`RESET` to clear the words.
+Over USB at 115200 baud:
+
+| command | what it does |
+|---|---|
+| `DUMP` | every word given, with the depth it was given at, as CSV |
+| `BAND` | the dwell histogram |
+| `SOURCES` | where the fields came from (deliberately not on screen) |
+| `RESET` | clear the words |
+| `TEST` | speaker sweep, motor ramp, ring white — says what it finds |
+| `RING <gpio> [count]` | re-wire the ring to another pin and flash it white, without recompiling |
+
+`TEST` and `RING` exist because "it doesn't work" is not a diagnosis. The
+speaker sweep in particular walks 220 Hz to 2 kHz: if only the upper tones are
+audible, that is the speaker's physics, not the firmware.
 
 ---
 

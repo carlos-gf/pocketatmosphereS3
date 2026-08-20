@@ -41,6 +41,7 @@ void storeFlush();                // vuelca lo pendiente (llamar con pantalla ap
 // ajustes
 struct Settings {
   bool sound = true;
+  bool haptics = true;   // el motor se apaga aparte del sonido: son dos canales
   bool reveal = false;   // si revela el lugar de origen tras nombrar
   uint8_t bright = 170;
   uint8_t lastAtmos = 0;

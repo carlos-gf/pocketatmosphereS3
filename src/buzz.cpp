@@ -56,6 +56,24 @@ void buzzPing(uint16_t hz, uint16_t ms) {
 
 void buzzSilence() { M5.Speaker.stop(); }
 
+// Diagnostico por USB: dice lo que el altavoz cree de si mismo y recorre la
+// banda util, para no volver a discutir a ciegas si "el sonido no va".
+void buzzSelfTest(void (*say)(const char *)) {
+  char b[96];
+  snprintf(b, sizeof b, "speaker enabled=%d volume=%d",
+           (int)M5.Speaker.isEnabled(), (int)M5.Speaker.getVolume());
+  say(b);
+  static const int hzs[] = { 220, 380, 500, 700, 1000, 1500, 2000 };
+  for (int i = 0; i < 7; i++) {
+    snprintf(b, sizeof b, "  tone %d Hz", hzs[i]);
+    say(b);
+    M5.Speaker.setChannelVolume(CH_VOICE, 200);
+    M5.Speaker.tone(hzs[i], 400, CH_VOICE, true);
+    delay(500);
+  }
+  say("if only the higher ones were audible, that is the speaker, not the code");
+}
+
 void buzzUpdate(uint32_t now, uint16_t centrePitch, uint8_t spreadSemitones,
                 uint8_t ratePerMin, float agitation, float depth) {
   if (!enabled) return;
@@ -63,21 +81,28 @@ void buzzUpdate(uint32_t now, uint16_t centrePitch, uint8_t spreadSemitones,
   if (now < nextEvent) return;
 
   // La agitacion del IMU acelera los eventos; la reduccion los alarga y los baja.
-  float rate = ratePerMin * (1.0f + 2.2f * agitation);
-  if (rate < 0.5f) rate = 0.5f;
+  // Con 2..8 eventos por minuto y huecos exponenciales, se podia estar un minuto
+  // entero sin oir nada y concluir que no funcionaba. Sigue siendo puntuacion,
+  // pero lo bastante presente como para saber que esta vivo.
+  float rate = ratePerMin * 2.6f * (1.0f + 2.2f * agitation);
+  if (rate < 2.0f) rate = 2.0f;
   float meanGap = 60000.0f / rate;
   // huecos exponenciales: irregulares, nunca un metronomo
   float u = frand();
   if (u < 0.0001f) u = 0.0001f;
   nextEvent = now + (uint32_t)(-logf(u) * meanGap);
 
-  // Tono: centro del ambiente, disperso unos semitonos, y bajando con la
-  // profundidad. Con altavoz esto ya se puede hacer de verdad.
+  // REGISTRO. Dije que con altavoz desaparecia la restriccion del piezo. Es
+  // falso a medias: el altavoz de la CoreS3 es de 1 W y del tamano de una
+  // moneda, y por debajo de unos 380 Hz no mueve aire. Los tonos de 120..350 Hz
+  // que salian antes existian, pero no se oian: de ahi el "suena raro y muy
+  // bajito". La direccion "mas reducido = mas grave" se conserva, pero DENTRO
+  // de la banda donde este altavoz existe.
   float semis = (frand() - 0.5f) * 2.0f * spreadSemitones;
-  semis -= depth * 7.0f;                        // mas reducido, mas grave
-  float hz = centrePitch * powf(2.0f, semis / 12.0f);
-  if (hz < 90.0f) hz = 90.0f;
-  if (hz > 3000.0f) hz = 3000.0f;
+  semis -= depth * 5.0f;
+  float hz = centrePitch * 2.2f * powf(2.0f, semis / 12.0f);
+  if (hz < 380.0f) hz = 380.0f;
+  if (hz > 1900.0f) hz = 1900.0f;
 
   // Duracion: los eventos profundos son largos y blandos; los superficiales,
   // cortos y nitidos.

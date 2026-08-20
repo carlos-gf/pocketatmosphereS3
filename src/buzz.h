@@ -23,3 +23,5 @@ void buzzUpdate(uint32_t now, uint16_t centrePitch, uint8_t spreadSemitones,
 // evento inmediato (confirmaciones de interfaz)
 void buzzPing(uint16_t hz, uint16_t ms);
 void buzzSilence();
+// recorre la banda util del altavoz e informa por el callback
+void buzzSelfTest(void (*say)(const char *));

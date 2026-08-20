@@ -86,6 +86,7 @@ static inline int boardBatteryPct() {
   return p < 0 ? 0 : (p > 100 ? 100 : p);
 }
 static inline void boardPowerOff() { M5.Power.powerOff(); }
+static inline bool boardCharging() { return M5.Power.isCharging() == m5::Power_Class::is_charging; }
 // El boton lateral izquierdo. En la 1.69 habia que aprender el nivel de reposo
 // de SYS_OUT a mano; aqui el PMIC ya lo resuelve.
 static inline bool boardButtonDown() { return M5.BtnPWR.isPressed(); }

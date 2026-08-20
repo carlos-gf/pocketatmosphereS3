@@ -16,6 +16,8 @@
 
 void hapticBegin();
 void hapticSetEnabled(bool on);
+// el aparato se sabe sostenido: los pulsos pueden ser mas largos y mas suaves
+void hapticSetHeld(bool held);
 // level 0..1 (intensidad sostenida), ms = duracion total incluida la patada
 void hapticPulse(float level, uint16_t ms);
 // llamar en cada vuelta del loop

@@ -15,6 +15,11 @@
 // ---------------------------------------------------------------------------
 
 void ringBegin(uint8_t count);
+// vuelve a montar el anillo en otro pin, en caliente (para probar por USB)
+void ringRewire(uint8_t pin, uint8_t count);
+// enciende todo en blanco al tope permitido durante ms: prueba de cableado
+void ringSelfTest(uint16_t ms);
+uint8_t ringPin();
 void ringSetEnabled(bool on);
 // color de fondo del anillo (RGB565, tal cual sale del campo) y brillo 0..1
 void ringSetField(uint16_t rgb565, float brightness);
