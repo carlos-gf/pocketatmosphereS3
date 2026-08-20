@@ -33,6 +33,7 @@
 #include "store.h"
 #include "buzz.h"
 #include "haptic.h"
+#include "ring.h"
 
 #define FW_VERSION "0.1-s3"
 
@@ -99,6 +100,25 @@ static void textMid(int cx, int y, const char *s, uint16_t col, uint8_t size) {
   textAt(cx - (int)strlen(s) * 3 * size, y, s, col, size);
 }
 
+// La 1.69 tenia un pulsador lateral para pasar de pantalla. La CoreS3 solo
+// tiene el de encendido, asi que la navegacion vuelve a la pantalla: una
+// esquina viva arriba a la izquierda. En el campo son tres rayas (ir al
+// siguiente cuadro); en los demas cuadros es una flecha (volver al campo).
+#define CORNER 44
+
+static void drawCorner(uint16_t col, bool back) {
+  if (back) {
+    // flecha a la izquierda
+    for (int i = 0; i < 8; i++) gfx->drawFastHLine(14 + i, 20 - i, 1, col);
+    for (int i = 0; i < 8; i++) gfx->drawFastHLine(14 + i, 20 + i, 1, col);
+    gfx->drawFastHLine(14, 20, 18, col);
+  } else {
+    for (int i = 0; i < 3; i++) gfx->fillRect(14, 14 + i * 6, 18, 2, col);
+  }
+}
+
+static bool inCorner(int x, int y) { return x < CORNER && y < CORNER; }
+
 static void drawBattery(int x, int y, uint16_t col) {
   int pct = boardBatteryPct();   // el AXP2101 ya lo sabe: sin divisor ni ADC
   gfx->drawRect(x, y, 18, 9, col);
@@ -115,6 +135,9 @@ static void renderField(uint32_t now) {
 
   bool hud = (now < hudUntil) || showDepthBig;
   uint16_t ink = inkOn(fs);
+  // La esquina se dibuja SIEMPRE, tambien con la interfaz retirada. Es la unica
+  // salida que hay, y una salida que desaparece no es una salida.
+  drawCorner(ink, false);
 
   if (revealUntil && now < revealUntil) {
     // tras nombrar, si el ajuste esta activo, se dice de donde venia
@@ -168,6 +191,7 @@ static void renderNames() {
   char h[24];
   snprintf(h, sizeof h, "NAMED  %s", ATMOS_NUMERAL[fs.atmos]);
   textMid(LCD_WIDTH / 2, 16, h, ink, 2);
+  drawCorner(ink, true);
 
   uint8_t n = storeNameCount(fs.atmos);
   if (n == 0) {
@@ -189,7 +213,7 @@ static void renderNames() {
       gfx->fillRect(px - 1, y, 3, 9, ink);
     }
   }
-  textMid(LCD_WIDTH / 2, LCD_HEIGHT - 18, "button: next screen", ink, 1);
+  textMid(LCD_WIDTH / 2, LCD_HEIGHT - 18, "corner: back to the field", ink, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +224,7 @@ static void renderBand() {
   uint16_t bg = groundOf(fs), ink = inkOfGround(fs);
   gfx->fillScreen(bg);
   textMid(LCD_WIDTH / 2, 16, "YOUR BAND", ink, 2);
+  drawCorner(ink, true);
   textMid(LCD_WIDTH / 2, 40, "where you settle", ink, 1);
 
   const uint32_t *b = storeBand();
@@ -231,7 +256,7 @@ static void renderBand() {
     snprintf(s, sizeof s, "%lum %lus held", (unsigned long)(tot / 60), (unsigned long)(tot % 60));
     textMid(LCD_WIDTH / 2, base + 32, s, ink, 1);
   }
-  textMid(LCD_WIDTH / 2, LCD_HEIGHT - 18, "button: next screen", ink, 1);
+  textMid(LCD_WIDTH / 2, LCD_HEIGHT - 18, "corner: back to the field", ink, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +277,7 @@ static void renderIndex() {
   uint16_t bg = groundOf(fs), ink = inkOfGround(fs);
   gfx->fillScreen(bg);
   textMid(LCD_WIDTH / 2, 16, "SIX FIELDS", ink, 2);
+  drawCorner(ink, true);
 
   for (int i = 0; i < ATMOS_COUNT; i++) {
     int c = i % IDX_COLS, r = i / IDX_COLS;
@@ -284,6 +310,7 @@ static void renderSettings() {
   uint16_t bg = groundOf(fs), ink = inkOfGround(fs);
   gfx->fillScreen(bg);
   textMid(LCD_WIDTH / 2, 16, "SETTINGS", ink, 2);
+  drawCorner(ink, true);
 
   Settings &st = storeSettings();
   char v[24];
@@ -345,6 +372,7 @@ static void renderKeyboard() {
   uint16_t bg = groundOf(fs), ink = inkOfGround(fs);
   gfx->fillScreen(bg);
   textMid(LCD_WIDTH / 2, 18, "WHAT IS IT?", ink, 2);
+  drawCorner(ink, true);   // salir sin nombrar: no todo el mundo quiere hacerlo
   textMid(LCD_WIDTH / 2, 42, "your word, not ours", ink, 1);
 
   gfx->drawRect(20, 64, LCD_WIDTH - 40, 30, ink);
@@ -461,6 +489,19 @@ static void handleTouch(uint32_t now) {
     uint32_t dt = now - gStart;
     bool tap = (dt < 500 && abs(dx) < 14 && abs(dy) < 14);
 
+    if (tap && !gLongFired && inCorner(gxl, gyl)) {
+      if (mode == M_FIELD) {
+        nextMode();
+      } else {
+        mode = M_FIELD;
+        hudUntil = now + 2000;
+        buzzPing(660, 30);
+      }
+      showDepthBig = false;
+      touchDown = down;
+      return;
+    }
+
     if (mode == M_FIELD) {
       if (gAxis == 2 && abs(dx) > 55) {
         // cambiar de campo: cada uno recuerda su propia profundidad
@@ -513,6 +554,7 @@ static void powerOff() {
   storeFlush();
   buzzSilence();
   hapticStop();
+  ringOff();
   boardBrightness(0);
   delay(60);
   boardPowerOff();          // el AXP2101 corta de verdad: consumo cero
@@ -626,7 +668,11 @@ void setup() {
   cfg.internal_imu  = true;
   cfg.internal_rtc  = true;
   cfg.internal_spk  = true;
-  cfg.internal_mic  = true;
+  // El micro y el altavoz comparten el bus I2S en la CoreS3: dejar los dos
+  // encendidos convierte el sonido en estatica. Cuando llegue el momento de
+  // grabar ambientes habra que apagar el altavoz mientras se graba, no tener
+  // ambos a la vez.
+  cfg.internal_mic  = false;
   M5.begin(cfg);
 
   Serial.begin(115200);
@@ -643,6 +689,7 @@ void setup() {
   buzzSetEnabled(storeSettings().sound);
   hapticBegin();
   hapticSetEnabled(storeSettings().sound);
+  ringBegin(12);              // cambia el numero si tu anillo tiene otro
 
   imuOk = M5.Imu.isEnabled();
   if (!imuOk) Serial.println("IMU not found");
@@ -672,6 +719,8 @@ void loop() {
   const Atmos &a = ATMOS[fs.atmos];
   buzzUpdate(now, a.voicePitch, a.voiceSpread, a.voiceRate, fs.agitation, fs.depth);
   hapticUpdate(now);
+  ringSetField(fieldMidColor(fs), 0.35f + 0.5f * (1.0f - fs.depth));
+  ringUpdate(now);
 
   if (screenOff) {
     delay(30);

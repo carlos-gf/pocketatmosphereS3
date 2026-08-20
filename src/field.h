@@ -10,6 +10,17 @@
 #define FIELD_GW (FIELD_W / FIELD_CELL + 1)
 #define FIELD_GH (FIELD_H / FIELD_CELL + 1)
 
+// LovyanGFX (M5Canvas) guarda el sprite de 16 bits con los bytes intercambiados
+// respecto a como los escribia Arduino_GFX. Al volcar el campo directamente en
+// el bufer hay que darle la vuelta a cada pixel, o los colores salen chillones:
+// un gris azulado se convierte en naranja. Lo que se dibuja por la API (texto,
+// rectangulos) NO lleva swap: de eso ya se encarga la libreria.
+#if defined(ARDUINO) && !defined(FIELD_HOST)
+#define FIELD_OUT(c) ((uint16_t)(((uint16_t)(c) >> 8) | ((uint16_t)(c) << 8)))
+#else
+#define FIELD_OUT(c) (c)
+#endif
+
 struct FieldState {
   uint8_t atmos = 0;
   float depth = 0.55f;    // 0 = reduccion leve (mas estructura), 1 = reduccion profunda

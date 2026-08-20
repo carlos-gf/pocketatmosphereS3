@@ -108,4 +108,4 @@ static inline bool boardButtonDown() { return M5.BtnPWR.isPressed(); }
 #define PORT_C_PIN2 18
 
 #define LED_RING_PIN PORT_B_PIN1   // anillo SK6812 (datos), PORT.B
-#define HAPTIC_PIN   PORT_C_PIN2   // motor de vibracion (PWM), PORT.C pin 2
+#define HAPTIC_PIN   PORT_C_PIN1   // motor de vibracion (PWM), PORT.C

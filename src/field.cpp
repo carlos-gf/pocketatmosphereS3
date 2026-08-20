@@ -437,7 +437,7 @@ static void renderImage(uint16_t *out, int outStride, int outRows, int x0, int y
       int sy = (int)((int64_t)y * H / (h > 1 ? h : 1));
       for (int x = 0; x < w; x++) {
         int sx = (int)((int64_t)x * W / (w > 1 ? w : 1));
-        dst[x] = img[(size_t)sy * W + sx];
+        dst[x] = FIELD_OUT(img[(size_t)sy * W + sx]);
       }
     }
     return;
@@ -520,7 +520,7 @@ static void renderImage(uint16_t *out, int outStride, int outRows, int x0, int y
     int sy = (int)((int64_t)y * H / (h > 1 ? h : 1));
     for (int x = 0; x < w; x++) {
       int sx = (int)((int64_t)x * W / (w > 1 ? w : 1));
-      dst[x] = scratch[(size_t)sy * W + sx];
+      dst[x] = FIELD_OUT(scratch[(size_t)sy * W + sx]);
     }
   }
 }
@@ -588,7 +588,7 @@ static void renderInto(uint16_t *out, int outStride, int outRows, int x0, int y0
       int k = (int)(v * top + dth + 0.5f);
       if (k < 0) k = 0;
       if (k > levels - 1) k = levels - 1;
-      dst[x] = lut[k];
+      dst[x] = FIELD_OUT(lut[k]);
     }
   }
 }

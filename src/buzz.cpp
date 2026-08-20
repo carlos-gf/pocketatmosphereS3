@@ -1,6 +1,7 @@
 #include "buzz.h"
 #include "board_cores3.h"
 #include "haptic.h"
+#include "ring.h"
 #include <math.h>
 
 // ---------------------------------------------------------------------------
@@ -29,13 +30,17 @@ static float frand() {
   return (float)((rngState >> 8) & 0xFFFF) / 65535.0f;
 }
 
+// Dos canales: la voz del campo y las confirmaciones de interfaz. Separarlos
+// evita que un evento largo se corte al tocar una tecla, y sobre todo evita
+// tocar el volumen maestro en cada evento -que era lo que dejaba mudo todo lo
+// siguiente-.
+#define CH_VOICE 0
+#define CH_UI    1
+
 void buzzBegin() {
-  auto cfg = M5.Speaker.config();
-  cfg.sample_rate = 48000;
-  cfg.task_priority = 1;
-  M5.Speaker.config(cfg);
-  M5.Speaker.begin();
-  M5.Speaker.setVolume(90);   // se queda por debajo del maximo: es un susurro
+  M5.Speaker.begin();          // configuracion por defecto: la de la placa
+  M5.Speaker.setVolume(180);   // maestro alto; la dinamica se hace por canal
+  M5.Speaker.setChannelVolume(CH_UI, 90);
 }
 
 void buzzSetEnabled(bool on) {
@@ -45,7 +50,7 @@ void buzzSetEnabled(bool on) {
 
 void buzzPing(uint16_t hz, uint16_t ms) {
   if (!enabled) return;
-  M5.Speaker.tone(hz, ms);
+  M5.Speaker.tone(hz, ms, CH_UI, true);
   hapticPulse(0.22f, 40);   // confirmaciones de interfaz: un toque, no un aviso
 }
 
@@ -79,11 +84,12 @@ void buzzUpdate(uint32_t now, uint16_t centrePitch, uint8_t spreadSemitones,
   uint16_t ms = (uint16_t)(90.0f + 520.0f * depth + 140.0f * frand());
 
   // Volumen por evento: la profundidad tambien apaga.
-  uint8_t vol = (uint8_t)(70.0f - 34.0f * depth + 18.0f * agitation);
-  M5.Speaker.setVolume(vol);
-  M5.Speaker.tone(hz, ms);
+  uint8_t vol = (uint8_t)(120.0f - 55.0f * depth + 40.0f * agitation);
+  M5.Speaker.setChannelVolume(CH_VOICE, vol);
+  M5.Speaker.tone(hz, ms, CH_VOICE, true);
 
   // El mismo acontecimiento, en la mano. Mas profundo = mas largo y mas debil:
   // en el extremo reducido el aparato casi no se anuncia, solo respira.
   hapticPulse(0.30f + 0.45f * agitation - 0.15f * depth, (uint16_t)(ms * 0.55f));
+  ringPulse(0.45f + 0.4f * agitation);
 }

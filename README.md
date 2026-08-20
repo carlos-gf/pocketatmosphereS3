@@ -40,7 +40,7 @@ Installing *without* erasing keeps the words and dwell log already collected.
 | swipe sideways | next field — each remembers its own depth |
 | tap | show or hide the readout |
 | hold about a second | name what you're looking at |
-| left button, short press | next screen |
+| top-left corner | ≡ on the field goes to the next screen; ← anywhere else returns to the field (and cancels naming) |
 | left button, hold ~1.5 s | power off properly |
 
 Over USB at 115200 baud: `DUMP` for the words as CSV, `BAND` for the dwell
@@ -87,14 +87,14 @@ photographs whole and derives everything else at run time.
 Both Grove ports on the unit are free:
 
     PORT.B   GPIO 8    SK6812 ring data — put a 1N4001 in series with its +5 V
-    PORT.C   GPIO 18   vibration motor PWM  (akita11 LightVibratorUnit, AKITA-060)
+    PORT.C   GPIO 17   vibration motor PWM  (akita11 LightVibratorUnit, AKITA-060)
     PORT.A             left free (I2C)
 
 The vibration unit carries its control signal on **Grove pin 2** (pin 1 is not
 connected) and runs happily at either 5 V or 3.3 V. Which of a port's two GPIOs
 is "pin 1" is not stated unambiguously anywhere I could find, so if the motor
-stays silent, change `HAPTIC_PIN` in `src/board_cores3.h` from `PORT_C_PIN2` to
-`PORT_C_PIN1` and rebuild. That is the only thing to touch.
+stays silent, change `HAPTIC_PIN` in `src/board_cores3.h` between `PORT_C_PIN1`
+and `PORT_C_PIN2` and rebuild. That is the only thing to touch.
 
 The haptics are not a notification layer. Every event in the field is played
 through the speaker **and** the motor with the same envelope — a felt pulse and
@@ -104,8 +104,13 @@ itself. Each pulse starts with an 18 ms kick at full duty, because a small
 eccentric-mass motor will not break inertia below about 60% and would otherwise
 just hum without turning.
 
-Power the ring from the port's 5 V, cap its brightness in firmware, and expect
-about 100–150 mA at the level an ambient glow actually needs.
+The ring is driven from `src/ring.cpp` (Adafruit_NeoPixel, PORT.B / GPIO 8).
+Data goes to the ring's **`I` / `DI`** pad — `O` / `DO` is the chaining output
+and stays unconnected. Brightness is hard-capped at 16% in `RING_CEIL`: above
+that it stops being an atmosphere and the Grove 5 V rail can't sustain it
+anyway. The ring takes the field's mean colour and pulses with the same events
+as the voice and the motor. Set the LED count in `ringBegin()` — it defaults
+to 12.
 
 ---
 
