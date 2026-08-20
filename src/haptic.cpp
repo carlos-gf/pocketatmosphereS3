@@ -2,8 +2,10 @@
 #include "board_cores3.h"
 #include <math.h>
 
-// 20 kHz: por encima de lo audible, asi que el motor no chirria ademas de vibrar.
-#define HAPTIC_FREQ 20000
+// PWM a 1,2 kHz, no a 20 kHz. A 20 kHz la inductancia del motor limita la
+// corriente y a duty bajo no llega par: se queda quieto. A ~1 kHz sigue siendo
+// bastante agudo como para no molestar y el motor si responde a duty bajo.
+#define HAPTIC_FREQ 1200
 #define HAPTIC_BITS 10
 #define HAPTIC_MAX  1023
 
@@ -65,8 +67,12 @@ void hapticPulse(float level, uint16_t ms) {
   if (!enabled || !ready || level <= 0.0f) return;
   if (level > 1.0f) level = 1.0f;
 
-  // Sostenido util: 8%..34%. Por encima ya no acompana, interrumpe.
-  peak = 0.08f + 0.26f * level;
+  // ESTE era el fallo del intento anterior. Al suavizarlo baje el sostenido a
+  // 8%..34%, que esta POR DEBAJO del punto en que este motor arranca: la patada
+  // inicial lo movia y luego se calaba. Por eso solo se notaban los toques de
+  // interfaz -que son casi solo patada- y los eventos del campo, mas largos,
+  // no se sentian en absoluto. El sostenido util empieza alrededor del 34%.
+  peak = 0.34f + 0.30f * level;
 
   // En la mano puede durar mas y entrar mas despacio. En la mesa, lo contrario.
   float stretch = held ? 1.9f : 0.7f;

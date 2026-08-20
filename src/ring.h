@@ -23,6 +23,9 @@ uint8_t ringPin();
 void ringSetEnabled(bool on);
 // color de fondo del anillo (RGB565, tal cual sale del campo) y brillo 0..1
 void ringSetField(uint16_t rgb565, float brightness);
+// n colores, uno por LED, ya en RGB565: el campo muestreado en circunferencia
+void ringSetColors(const uint16_t *cols, uint8_t n, float brightness);
+uint8_t ringCount();
 // acontecimiento: un realce breve sobre el fondo
 void ringPulse(float level);
 void ringUpdate(uint32_t now);

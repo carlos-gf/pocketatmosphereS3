@@ -779,7 +779,13 @@ void loop() {
   const Atmos &a = ATMOS[fs.atmos];
   buzzUpdate(now, a.voicePitch, a.voiceSpread, a.voiceRate, fs.agitation, fs.depth);
   hapticUpdate(now);
-  ringSetField(fieldMidColor(fs), 0.35f + 0.5f * (1.0f - fs.depth));
+  {
+    uint16_t rc[24];
+    uint8_t n = ringCount();
+    if (n > 24) n = 24;
+    fieldRingColors(fs, rc, n);
+    ringSetColors(rc, n, 0.40f + 0.45f * (1.0f - fs.depth));
+  }
   ringUpdate(now);
 
   if (screenOff) {

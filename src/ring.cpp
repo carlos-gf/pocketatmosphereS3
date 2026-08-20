@@ -10,7 +10,12 @@ static Adafruit_NeoPixel *strip = nullptr;
 static uint8_t nLeds = 0;
 static uint8_t curPin = LED_RING_PIN;
 static bool enabled = true;
-static uint8_t baseR = 0, baseG = 0, baseB = 0;
+#define RING_MAX 24
+// Objetivo y valor actual por LED. El anillo NUNCA salta al objetivo: se
+// arrastra hacia el. Un cambio instantaneo se lee como un aviso; uno lento se
+// lee como luz.
+static float tgtR[RING_MAX], tgtG[RING_MAX], tgtB[RING_MAX];
+static float curR[RING_MAX], curG[RING_MAX], curB[RING_MAX];
 static float baseLevel = 0.0f;
 static float pulseLevel = 0.0f;
 static uint32_t lastUpdate = 0;
@@ -53,12 +58,22 @@ void ringOff() {
   strip->show();
 }
 
+uint8_t ringCount() { return nLeds; }
+
 void ringSetField(uint16_t c, float brightness) {
-  // RGB565 -> 8 bits por canal
-  baseR = (uint8_t)(((c >> 11) & 0x1F) * 255 / 31);
-  baseG = (uint8_t)(((c >> 5) & 0x3F) * 255 / 63);
-  baseB = (uint8_t)((c & 0x1F) * 255 / 31);
+  uint16_t one[1] = { c };
+  ringSetColors(one, 1, brightness);
+}
+
+void ringSetColors(const uint16_t *cols, uint8_t n, float brightness) {
   baseLevel = brightness < 0 ? 0 : (brightness > 1 ? 1 : brightness);
+  if (!n) return;
+  for (uint8_t i = 0; i < nLeds && i < RING_MAX; i++) {
+    uint16_t c = cols[n == 1 ? 0 : (i % n)];
+    tgtR[i] = ((c >> 11) & 0x1F) * 255.0f / 31.0f;
+    tgtG[i] = ((c >> 5) & 0x3F) * 255.0f / 63.0f;
+    tgtB[i] = (c & 0x1F) * 255.0f / 31.0f;
+  }
 }
 
 void ringPulse(float level) {
@@ -80,9 +95,15 @@ void ringUpdate(uint32_t now) {
   float lvl = (baseLevel + pulseLevel * 0.9f) * RING_CEIL;
   if (lvl > RING_CEIL) lvl = RING_CEIL;
 
-  uint8_t r = (uint8_t)(baseR * lvl);
-  uint8_t g = (uint8_t)(baseG * lvl);
-  uint8_t b = (uint8_t)(baseB * lvl);
-  for (uint8_t i = 0; i < nLeds; i++) strip->setPixelColor(i, r, g, b);
+  // Arrastre hacia el objetivo. La constante es deliberadamente lenta: a 30 Hz
+  // tarda alrededor de un segundo en llegar, que es el tiempo que separa "se
+  // esta moviendo" de "ha cambiado".
+  const float k = 0.06f;
+  for (uint8_t i = 0; i < nLeds && i < RING_MAX; i++) {
+    curR[i] += (tgtR[i] - curR[i]) * k;
+    curG[i] += (tgtG[i] - curG[i]) * k;
+    curB[i] += (tgtB[i] - curB[i]) * k;
+    strip->setPixelColor(i, (uint8_t)(curR[i] * lvl), (uint8_t)(curG[i] * lvl), (uint8_t)(curB[i] * lvl));
+  }
   strip->show();
 }

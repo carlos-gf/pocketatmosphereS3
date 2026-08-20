@@ -118,11 +118,15 @@ just hum without turning.
 
 The ring is driven from `src/ring.cpp` (Adafruit_NeoPixel, PORT.B / GPIO 8).
 Data goes to the ring's **`I` / `DI`** pad — `O` / `DO` is the chaining output
-and stays unconnected. Brightness is hard-capped at 16% in `RING_CEIL`: above
-that it stops being an atmosphere and the Grove 5 V rail can't sustain it
-anyway. The ring takes the field's mean colour and pulses with the same events
-as the voice and the motor. Set the LED count in `ringBegin()` — it defaults
-to 12.
+and stays unconnected. Brightness is hard-capped at 16% in `RING_CEIL`. Set the
+LED count in `ringBegin()` — it defaults to 12.
+
+The ring is not a status light. `fieldRingColors()` in `field.cpp` samples the
+**same value noise and the same palette as the screen**, around a circle, so
+the light is the same weather leaking out of the edge of the device. It drifts
+with the field's own clock, and each LED slews toward its target at about one
+second — an instant change reads as an alert, a slow one reads as light. Fewer
+colours are available as reduction deepens, exactly as on screen.
 
 ---
 

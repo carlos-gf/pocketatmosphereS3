@@ -601,6 +601,25 @@ void fieldSwatch(uint16_t *fb, int fbw, int fbh, int x0, int y0, int w, int h, c
   renderInto(fb, fbw, fbh, x0, y0, w, h, st);
 }
 
+void fieldRingColors(const FieldState &st, uint16_t *out, int n) {
+  uint16_t lut[16];
+  int levels = buildLut(st, lut);
+  Span sp = depthSpan(st.depth);
+  // Una vuelta completa de ruido, recorrida despacio: el anillo respira al
+  // mismo ritmo que el campo porque comparte t y la misma funcion.
+  float t = st.t * 0.35f;
+  for (int i = 0; i < n; i++) {
+    float a = (float)i / (float)(n > 0 ? n : 1) * 6.2831853f;
+    float cx = cosf(a) * 1.15f, cy = sinf(a) * 1.15f;
+    float v = valueNoise(cx, cy, t) * 0.65f + valueNoise(cx * 2.1f + 9.0f, cy * 2.1f, t * 1.4f) * 0.35f;
+    v = sp.lo + v * (sp.hi - sp.lo);
+    int k = (int)(v * (levels - 1) + 0.5f);
+    if (k < 0) k = 0;
+    if (k > levels - 1) k = levels - 1;
+    out[i] = lut[k];   // sin swap: esto no va al framebuffer, va a los LED
+  }
+}
+
 uint16_t fieldMidColor(const FieldState &st) {
   uint16_t lut[16];
   int levels = buildLut(st, lut);

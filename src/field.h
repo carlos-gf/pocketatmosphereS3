@@ -40,5 +40,10 @@ uint16_t fieldMidColor(const FieldState &st);
 // Devuelve true si el campo es claro, para elegir tinta oscura encima.
 bool fieldIsLight(const FieldState &st);
 
+// Muestrea el campo en un ANILLO: n colores repartidos por una circunferencia,
+// sacados del mismo ruido y la misma paleta que la pantalla. Asi la luz no es
+// una decoracion aparte, es el mismo tiempo atmosferico saliendo por el borde.
+void fieldRingColors(const FieldState &st, uint16_t *out, int n);
+
 // Cuantos colores distintos puede producir el campo con esta profundidad.
 int fieldLevels(float depth);
