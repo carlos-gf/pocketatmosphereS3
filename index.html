@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket Atmosphere · Installer</title>
+<style>
+  :root { --bg:#e8e6e0; --ink:#22252a; --soft:#6a6d74; --line:#c9c6bd; --accent:#4f6b7a; --card:#f6f5f1; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--ink); line-height:1.62; }
+  .wrap { max-width:660px; margin:0 auto; padding:2.5rem 1.25rem 4rem; }
+  h1 { font-size:1.9rem; margin:0 0 .2rem; font-weight:600; letter-spacing:-.01em; }
+  h2 { font-size:1.05rem; margin:2.2rem 0 .6rem; font-weight:600; }
+  .sub { color:var(--soft); margin:0 0 1.6rem; }
+  .note { font-size:.9rem; color:var(--soft); }
+  .unsupported { display:none; color:#a4402f; font-weight:500; }
+
+  /* firmware picker */
+  .opts { display:grid; gap:.7rem; margin:0 0 1.3rem; }
+  .opt { display:grid; grid-template-columns:22px 1fr; gap:.85rem; align-items:start;
+         background:var(--card); border:1px solid var(--line); border-radius:12px;
+         padding:.95rem 1.1rem; cursor:pointer; transition:border-color .12s, background .12s; }
+  .opt:hover { border-color:var(--accent); }
+  .opt.sel { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); background:#fff; }
+  .opt input { margin:.3rem 0 0; accent-color:var(--accent); }
+  .opt h3 { margin:0; font-size:1rem; font-weight:600; }
+  .opt p { margin:.15rem 0 0; font-size:.9rem; color:var(--soft); }
+  .strip { display:flex; gap:4px; margin-top:.55rem; }
+  .strip div { height:16px; flex:1; border-radius:3px; }
+  .ver { font-size:.78rem; color:var(--soft); font-variant-numeric:tabular-nums; }
+
+  button { font:inherit; font-weight:500; padding:.65rem 1.3rem; border-radius:10px;
+           border:1px solid var(--ink); background:#fff; cursor:pointer; }
+  button:hover { background:var(--bg); }
+  esp-web-install-button { display:inline-block; }
+  esp-web-install-button[install-unsupported] { display:none; }
+  esp-web-install-button:not(:defined) span { display:none; }
+  table { border-collapse:collapse; width:100%; font-size:.92rem; }
+  td { padding:.35rem .5rem .35rem 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  td:first-child { width:150px; color:var(--soft); }
+  code { background:#0000000d; padding:.1em .4em; border-radius:5px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Pocket Atmosphere</h1>
+  <p class="sub">Six atmospheric fields in the hand, and one dial that decides how much of
+     each one is left. For the Waveshare <b>ESP32-S3-Touch-LCD-1.69</b>.</p>
+
+  <p class="unsupported" id="unsupported">
+    ⚠️ Your browser doesn't support Web Serial. Use <b>Chrome</b> or <b>Edge</b> on a computer.
+  </p>
+
+  <div class="opts" id="opts"></div>
+
+  <div id="installer"></div>
+
+  <p class="note" style="margin-top:.9rem">The board holds one firmware at a time, so installing
+     replaces whatever is on it. Install <b>without</b> erasing and the words and dwell log
+     already collected survive.</p>
+
+  <h2>Holding it</h2>
+  <table>
+    <tr><td>drag up / down</td><td>reduction depth, live under the thumb</td></tr>
+    <tr><td>swipe sideways</td><td>next field — each remembers its own depth</td></tr>
+    <tr><td>tap</td><td>show or hide the readout</td></tr>
+    <tr><td>hold about a second</td><td>name what you're looking at</td></tr>
+    <tr><td>left button, short press</td><td>next screen</td></tr>
+    <tr><td>left button, hold ~1.5 s</td><td>power off properly</td></tr>
+  </table>
+  <p class="note">Over USB at 115200 baud: <code>DUMP</code> for the words as CSV,
+     <code>BAND</code> for the dwell histogram, <code>SOURCES</code> if you really want to know
+     where the fields came from.</p>
+
+  <p class="note">A research instrument for a PhD on reduced perceptual cues.</p>
+</div>
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+<script>
+// ---------------------------------------------------------------------------
+// To add a firmware: drop its .bin in firmware/, add a manifest-*.json beside
+// this file, and add one entry here. Nothing else changes.
+// ---------------------------------------------------------------------------
+const FIRMWARES = [
+  {
+    id: "noise",
+    name: "Noise fields",
+    version: "0.1",
+    manifest: "manifest-cores3-noise-v0.1.json",
+    blurb: "Six fields built from fractal noise in authored palettes. The dial runs from structured to a flat wash.",
+    swatches: ["#4f5d68", "#334537", "#705032", "#b7bfc6", "#272e49", "#9e8765"]
+  },
+  {
+    id: "images",
+    name: "Photograph fields",
+    version: "0.3",
+    manifest: "manifest-cores3-images-v0.3.json",
+    blurb: "Six photographs, reduced by a local histogram-perfect permutation. The dial is how far a pixel may travel \u2014 from the place itself to a drift of its own colours.",
+    swatches: ["#4a5a2e", "#2b2f45", "#5f7ea8", "#8d7a5e", "#b4452f", "#e8a274"]
+  }
+];
+
+const opts = document.getElementById('opts');
+const installer = document.getElementById('installer');
+let selected = FIRMWARES[0].id;
+
+function render() {
+  // One firmware needs no chooser. The list appears by itself once there are two.
+  opts.style.display = FIRMWARES.length > 1 ? 'grid' : 'none';
+  opts.innerHTML = FIRMWARES.map(f => `
+    <label class="opt ${f.id === selected ? 'sel' : ''}" data-id="${f.id}">
+      <input type="radio" name="fw" value="${f.id}" ${f.id === selected ? 'checked' : ''}>
+      <span>
+        <h3>${f.name} <span class="ver">v${f.version}</span></h3>
+        <p>${f.blurb}</p>
+        <span class="strip">${f.swatches.map(c => `<div style="background:${c}"></div>`).join('')}</span>
+      </span>
+    </label>`).join('');
+
+  // The install button caches its manifest, so it is rebuilt on every change
+  // rather than having the attribute swapped underneath it.
+  const f = FIRMWARES.find(x => x.id === selected);
+  installer.innerHTML = `
+    <esp-web-install-button manifest="${f.manifest}">
+      <button slot="activate">Install${FIRMWARES.length > 1 ? ' &mdash; ' + f.name : ' Pocket Atmosphere'}</button>
+      <span slot="unsupported">Browser not supported (use Chrome/Edge).</span>
+      <span slot="not-allowed">Needs HTTPS.</span>
+    </esp-web-install-button>`;
+}
+
+opts.addEventListener('change', e => {
+  if (e.target.name === 'fw') { selected = e.target.value; render(); }
+});
+
+render();
+if (!('serial' in navigator)) document.getElementById('unsupported').style.display = 'block';
+</script>
+</body>
+</html>
