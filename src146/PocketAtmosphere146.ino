@@ -38,7 +38,7 @@
 #include "rpc.h"
 #endif
 
-#define FW_VERSION "0.4c-146"
+#define FW_VERSION "0.5-146"
 
 // QSPI -> SPD2010. El reset del panel cuelga del expansor, asi que aqui va
 // GFX_NOT_DEFINED y se hace a mano antes de begin().
@@ -187,24 +187,44 @@ static void drawBattery(int x, int y, uint16_t col) {
 // La unica reduccion fina que queda es la del instante en que se suelta el
 // dedo: una sola, y despues el aparato ya no calcula nada hasta que lo toques.
 // ---------------------------------------------------------------------------
-#define BREATH_SPAN 0.22f     // +- alrededor de la profundidad elegida
-#define BREATH_MS   330       // por fotograma: el ciclo entero dura unos 17 s
+// La respiracion va ANCLADA a la profundidad elegida, y esa profundidad es el
+// extremo CLARO del recorrido: el campo respira desde donde lo dejaste HACIA MAS
+// REDUCCION, y vuelve. El fotograma que elegiste esta siempre en el ciclo, y es
+// el mas legible de todos.
+//
+// Antes la ventana era +-0.22 CENTRADA y se desplazaba al topar con los
+// extremos, con dos consecuencias feas: dejarlo en 0.10 y dejarlo en 0.20 daban
+// exactamente la MISMA respiracion (0.05..0.49 las dos), y el centro real caia
+// en 0.27, que no es donde nadie lo habia dejado. Anclarla arregla las dos cosas
+// y ademas baja la cache de 4,4 MB a entre 0,5 y 2,2 MB.
+#define BREATH_SPAN 0.20f     // hacia dentro, nunca hacia fuera
+#define BREATH_MIN  0.06f     // recorrido minimo cerca del fondo de la escalera
+#define BREATH_MS   330       // por fotograma
 #define BREATH_WAIT 1500      // hay que soltarlo este rato para que arranque
-static uint32_t lastInteract = 0;
+#define DRAG_SETTLE 200       // parado esto, se pasa al nivel fino aunque sigas tocando
+static uint32_t lastInteract = 0, lastDepthMove = 0;
+static float lastDepthSeen = -1.0f;
 
 static void renderFieldPixels(uint32_t now) {
   uint16_t *fb = gfx->getFramebuffer();
 
-  // Con el dedo encima manda la respuesta, no la resolucion.
-  if (touchDown) { rpcDrag(fb, fs.atmos, fs.depth); return; }
+  if (fs.depth != lastDepthSeen) { lastDepthSeen = fs.depth; lastDepthMove = now; }
+
+  // El nivel grueso solo se ve MIENTRAS EL DEDO SE MUEVE. En cuanto se para, aun
+  // con el dedo puesto, se pasa al fino: asi el adelanto a cuadros dura lo que
+  // dura el gesto y no lo que dura el contacto.
+  if (touchDown && now - lastDepthMove < DRAG_SETTLE) {
+    rpcDrag(fb, fs.atmos, fs.depth);
+    return;
+  }
+  if (touchDown) { rpcStill(fb, fs.atmos, fs.depth); return; }
 
   bool idle = storeSettings().breathe && (now - lastInteract > BREATH_WAIT);
   if (!idle) { rpcStill(fb, fs.atmos, fs.depth); return; }
 
-  float lo = fs.depth - BREATH_SPAN, hi = fs.depth + BREATH_SPAN;
-  if (lo < 0.05f) { hi += 0.05f - lo; lo = 0.05f; }
-  if (hi > 0.98f) { lo -= hi - 0.98f; hi = 0.98f; }
-  if (lo < 0.05f) lo = 0.05f;
+  float lo = fs.depth, hi = fs.depth + BREATH_SPAN;
+  if (hi > 0.98f) hi = 0.98f;
+  if (hi - lo < BREATH_MIN) { lo = hi - BREATH_MIN; if (lo < 0.05f) lo = 0.05f; }
   rpcBreathSet(fs.atmos, lo, hi);
   rpcBreathBuild();                      // como mucho un estado por fotograma
   if (!rpcBreathFrame(fb, now, BREATH_MS)) rpcStill(fb, fs.atmos, fs.depth);

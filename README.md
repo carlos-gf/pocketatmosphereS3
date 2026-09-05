@@ -309,4 +309,43 @@ person left each field. Cost: 6 x 3 x 88 x 68 x 2 = 210 kB of flash.
 as `src146/rpc.cpp` — so the baked thumbnails and the live field come from one
 definition.
 
-Build: 2,782,230 bytes, 88% of the huge_app partition.
+### v0.5 — where the breath sits, and the blocky preview
+
+Two reports from the board, both correct, both with the same root: the breath
+window was **centred** on the chosen depth and slid when it hit the ends.
+
+**The animation was only visible at shallow reduction.** Measured: with a
+centred +-0.22 window, leaving the dial at 0.10 and leaving it at 0.20 both gave
+the *same* breath (0.05..0.49 in each case, because the window slid off the
+bottom), and the real midpoint landed at 0.27 — nowhere near where anyone left
+it. Worse, the visibility of the breath does not follow the pixel difference at
+all: a deep window changes *more* per step (mean |diff| 19.6 against 10.2 for a
+shallow one) yet reads as inert, because past d = 0.5 there is no legible scene
+left to lose. A breath is visible in proportion to the legibility it crosses,
+not the pixels it moves.
+
+So the window is now **anchored**: the depth you chose is the *shallow end*, and
+the field breathes from there toward more reduction and back. Your frame is
+always in the cycle and is its clearest point — which is what "the animation
+starts from that result" should mean. It also never slides off your choice, and
+the cache drops from 4.4 MB to between 0.5 and 2.2 MB.
+
+**The preview went blocky at shallow reduction.** That is the 103 px drag level
+with its nearest-neighbour quadrupling. Block energy at d = 0.08: 15.1 against
+the fine level's 7.9 — nearly double. It shows up specifically at the clear end
+of the ladder, because that is where there is still detail to lose; by d = 0.35
+it measures 6.8 and is invisible.
+
+Two changes. The drag preview now upscales **bilinear** instead of nearest, and
+the coarse level is only shown **while the depth is actually changing** — stop
+moving for 200 ms, even with your finger still down, and it switches to the fine
+render. So the soft preview lasts as long as the gesture, not as long as the
+touch.
+
+Note the tradeoff, because it is a real one: the bilinear preview is *not* a
+histogram-perfect permutation — interpolation invents intermediate colours. It
+is a scrubbing aid that exists for half a second. Everything settled — what you
+look at, name, and breathe — is still the exact permutation, verified at both
+levels after every change.
+
+Build: 2,782,494 bytes, 88% of the huge_app partition.

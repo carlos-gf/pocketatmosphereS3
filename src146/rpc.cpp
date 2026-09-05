@@ -402,6 +402,42 @@ static void blitN(const uint16_t *s, int w, int h, uint16_t *out412) {
   }
 }
 
+// Volcado SUAVE, solo para el nivel grueso mientras el dedo se mueve.
+//
+// Con vecino mas proximo, el nivel grueso a poca reduccion se ve a cuadros: la
+// energia de bloque medida a d=0.08 es 15.1 frente a 7.9 del nivel fino, casi
+// el doble. Y se nota justo ahi, en la parte CLARA de la escalera, porque es
+// donde queda detalle que perder; a d=0.35 ya da 6.8 y no se aprecia.
+//
+// El vecino es el volcado correcto para lo que se MIRA -devuelve el grano de la
+// referencia, 5.99 frente a 5.89, mientras que el bilineal lo hunde a 1.92-,
+// pero para un adelanto de medio segundo mientras se arrastra, el grano no
+// importa y los cuadros si. Asi que: suave mientras se mueve, exacto al parar.
+static void blitSmooth(const uint16_t *s, int w, int h, uint16_t *out412) {
+  const int sc = SRC_W / w;
+  for (int oy = 0; oy < SRC_H; oy++) {
+    int sy = oy / sc, fy = oy % sc;
+    int sy1 = (sy + 1 < h) ? sy + 1 : sy;
+    int wy = (fy * 256) / sc, iwy = 256 - wy;
+    const uint16_t *r0 = s + (size_t)sy * w, *r1 = s + (size_t)sy1 * w;
+    uint16_t *d = out412 + (size_t)oy * SRC_W;
+    for (int ox = 0; ox < SRC_W; ox++) {
+      int sx = ox / sc, fx = ox % sc;
+      int sx1 = (sx + 1 < w) ? sx + 1 : sx;
+      int wx = (fx * 256) / sc, iwx = 256 - wx;
+      uint16_t a = r0[sx], b = r0[sx1], e = r1[sx], f = r1[sx1];
+      uint32_t rr = ((a >> 11) & 0x1F) * iwx * iwy + ((b >> 11) & 0x1F) * wx * iwy +
+                    ((e >> 11) & 0x1F) * iwx * wy  + ((f >> 11) & 0x1F) * wx * wy;
+      uint32_t gg = ((a >> 5) & 0x3F) * iwx * iwy + ((b >> 5) & 0x3F) * wx * iwy +
+                    ((e >> 5) & 0x3F) * iwx * wy  + ((f >> 5) & 0x3F) * wx * wy;
+      uint32_t bb = (a & 0x1F) * iwx * iwy + (b & 0x1F) * wx * iwy +
+                    (e & 0x1F) * iwx * wy  + (f & 0x1F) * wx * wy;
+      uint16_t px = (uint16_t)(((rr >> 16) << 11) | ((gg >> 16) << 5) | (bb >> 16));
+      d[ox] = RPC_OUT(px);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CACHE POR ESTADO
 //
@@ -440,7 +476,7 @@ bool rpcDrag(uint16_t *out412, int atmos, float depth) {
   for (int i = 0; i < RPC_COARSE_SLOTS; i++) {
     if (slotMatches(coarse[i], atmos, q, b)) {
       coarse[i].used = ++useClock;
-      blitN(coarse[i].px, RPC_CW, RPC_CH, out412);
+      blitSmooth(coarse[i].px, RPC_CW, RPC_CH, out412);
       return true;
     }
     if (!coarse[i].px && free_i < 0) free_i = i;
@@ -456,7 +492,7 @@ bool rpcDrag(uint16_t *out412, int atmos, float depth) {
   coarse[i].atmos = atmos; coarse[i].q = q;
   coarse[i].b0 = b[0]; coarse[i].b1 = b[1]; coarse[i].b2 = b[2];
   coarse[i].used = ++useClock;
-  blitN(coarse[i].px, RPC_CW, RPC_CH, out412);
+  blitSmooth(coarse[i].px, RPC_CW, RPC_CH, out412);
   return true;
 }
 
