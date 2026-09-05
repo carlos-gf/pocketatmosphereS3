@@ -21,10 +21,14 @@ Three design decisions, all deliberate:
 Open the GitHub Pages URL for this repo in **Chrome or Edge on a computer**,
 plug the CoreS3 in over USB-C, and press Install. Two firmwares are offered:
 
-| build | what it shows |
-|---|---|
-| **Noise fields v0.1** | six fields built from fractal noise in authored palettes |
-| **Photograph fields v0.3** | six photographs, reduced by a local histogram-perfect permutation |
+Four builds, two boards. **Pick the one that matches your board** — both are
+ESP32-S3, so flashing the wrong one just fails to come up; re-flash and it
+recovers.
+
+| board | build | screen |
+|---|---|---|
+| **Waveshare ESP32-S3-Touch-LCD-1.46** | Noise fields v0.1 / Photograph fields v0.3 | 412×412 **round** |
+| **M5Stack CoreS3** | Noise fields v0.1 / Photograph fields v0.3 | 320×240 rectangular, plus haptics and LED ring |
 
 The CoreS3 has native USB, so it should appear as a serial port with no driver
 and without holding any button. If it doesn't appear, hold the **left button**
@@ -66,7 +70,8 @@ audible, that is the speaker's physics, not the firmware.
     index.html                    the web installer
     manifest-cores3-*.json        ESP Web Tools manifests, one per build
     firmware/                     prebuilt binaries + bootloader + partition table
-    src/                          the Arduino sketch
+    src/                          the CoreS3 sketch
+    src146/                       the Waveshare 1.46 sketch (round UI)
     tools/import_images.py        turns photographs into src/images.h
     tools/src/                    the six source photographs
 
@@ -144,3 +149,42 @@ names the original used and calls M5Unified underneath. Removed outright:
 The UI was relaid out from 240×280 portrait to 320×240 landscape.
 
 A research instrument for a PhD on reduced perceptual cues.
+
+
+---
+
+## The Waveshare 1.46 build
+
+412×412 round, SPD2010 over QSPI. `src146/board_ws146.h` holds everything
+board-specific; the field renderer and the store are shared with the CoreS3.
+
+    arduino-cli compile --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=cdc src146
+
+Add `--build-property "compiler.cpp.extra_flags=-DIMAGE_FIELDS=1"` for the
+photographs. Libraries: **GFX Library for Arduino** (has `Arduino_SPD2010` and
+`Arduino_ESP32QSPI`) and **SensorLib**. The SPD2010 touch driver, the TCA9554
+expander driver and the I²C helper come from Waveshare's own example and are
+included in `src146/`.
+
+Three things this board does differently, all of them load-bearing:
+
+* **The power latch is back.** GPIO 7 must be raised in the first lines of
+  `setup()` or the board dies the moment you release the button. That omission
+  is what killed the first 1.69.
+* **The panel reset is not a GPIO** — it hangs off the TCA9554 expander (EXIO2),
+  so it is pulsed by hand before `gfx->begin()`.
+* **Arduino_GFX stores RGB565 unswapped**, unlike LovyanGFX on the CoreS3. The
+  byte-swap in `field.h` is therefore disabled here. Getting that backwards is
+  what turned the CoreS3's colours into a rainbow.
+
+The UI is laid out for a **disc**, not a rectangle. There are no corners: the
+back and next arrows sit at the far left and right of the horizontal centre
+line, where a circle gives the most room, and the field's menu sits at bottom
+centre. Touch targets are circles, not rectangles. Everything textual lives
+inside the inscribed square (291 px). `fieldMaskCircle()` blacks out everything
+outside the disc — left unpainted, it leaks as a bright rim through the glass.
+
+Speaker and microphone are on **separate I²S buses** here, so unlike the CoreS3
+they can both run at once. Recording atmospheres stops being mutually exclusive
+with making sound. The voice is synthesised directly to the PCM5101 in
+`src146/buzz.cpp` — a sine with a real amplitude envelope, no library.

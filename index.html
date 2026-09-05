@@ -73,7 +73,7 @@
      <code>BAND</code> for the dwell histogram, <code>SOURCES</code> if you really want to know
      where the fields came from.</p>
 
-  <p class="note">A research instrument for a PhD on reduced perceptual cues.</p>
+  <p class="note"><b>Pick the build that matches your board.</b> Both are ESP32-S3, so nothing stops you flashing the wrong one \u2014 it just won\u2019t come up. Re-flash the right one and it recovers.</p>\n  <p class="note">A research instrument for a PhD on reduced perceptual cues.</p>
 </div>
 
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
@@ -84,19 +84,35 @@
 // ---------------------------------------------------------------------------
 const FIRMWARES = [
   {
-    id: "noise",
-    name: "Noise fields",
+    id: "146-noise",
+    name: "1.46 round \u2014 Noise fields",
     version: "0.1",
-    manifest: "manifest-cores3-noise-v0.1.json",
-    blurb: "Six fields built from fractal noise in authored palettes. The dial runs from structured to a flat wash.",
+    manifest: "manifest-ws146-noise-v0.1.json",
+    blurb: "Waveshare 1.46, 412\u00d7412 round. Six fields built from fractal noise in authored palettes.",
     swatches: ["#4f5d68", "#334537", "#705032", "#b7bfc6", "#272e49", "#9e8765"]
   },
   {
-    id: "images",
-    name: "Photograph fields",
+    id: "146-images",
+    name: "1.46 round \u2014 Photograph fields",
+    version: "0.3",
+    manifest: "manifest-ws146-images-v0.3.json",
+    blurb: "Waveshare 1.46, 412\u00d7412 round. Six photographs, reduced by a local histogram-perfect permutation.",
+    swatches: ["#4a5a2e", "#2b2f45", "#5f7ea8", "#8d7a5e", "#b4452f", "#e8a274"]
+  },
+  {
+    id: "s3-noise",
+    name: "CoreS3 \u2014 Noise fields",
+    version: "0.1",
+    manifest: "manifest-cores3-noise-v0.1.json",
+    blurb: "M5Stack CoreS3, 320\u00d7240. Same six noise fields, plus haptics and the LED ring.",
+    swatches: ["#4f5d68", "#334537", "#705032", "#b7bfc6", "#272e49", "#9e8765"]
+  },
+  {
+    id: "s3-images",
+    name: "CoreS3 \u2014 Photograph fields",
     version: "0.3",
     manifest: "manifest-cores3-images-v0.3.json",
-    blurb: "Six photographs, reduced by a local histogram-perfect permutation. The dial is how far a pixel may travel \u2014 from the place itself to a drift of its own colours.",
+    blurb: "M5Stack CoreS3, 320\u00d7240. The photographs, with haptics and the ring.",
     swatches: ["#4a5a2e", "#2b2f45", "#5f7ea8", "#8d7a5e", "#b4452f", "#e8a274"]
   }
 ];
