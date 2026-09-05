@@ -401,4 +401,51 @@ advances at most one frame per *painted* frame.
 (amplitude returns to zero and the noise pans a whole tile), so no ping-pong.
 Every frame verified an exact permutation of the source.
 
-Build: 2,783,742 bytes, 88% of the huge_app partition.
+### v0.7 — six changes to how it is held
+
+**The dial no longer reaches the photograph.** The range is now 0.20 – 1.00. The
+unreduced image is not a position on the dial, because seeing it once closes the
+reading of every other position.
+
+**Answering replaced naming.** The 28-key keyboard on a 412 px disc did not work,
+and not because the keys were small: spelling a word with a thumb is a different
+task from looking at a field, and it interrupts it. In its place, **six terms**,
+taken from the study's own battery — the Wang, Luo et al. (2014) descriptors used
+in Group C, the two per dimension that load highest *and* stay stable across the
+male and female factor solutions:
+
+    coziness    cosy (0.75/0.78)      relaxed (0.72/0.76)
+    liveliness  lively (0.83/0.82)    inspiring (0.78/0.77)
+    tenseness   tense (0.67/0.82)     oppressive (0.84/0.62)
+
+Group C rather than the AESTHEMOS emotions (Group D) because the device shows a
+*space*: C asks what the place is like, D asks what happened to you, and the
+instrument keeps them apart deliberately. To swap batteries, rewrite the table in
+`src146/PocketAtmosphere146.ino` — the storage format is unchanged.
+
+**A closed list inflates inter-participant agreement**, and the protocol says so
+itself about B5: *"deliberately not a forced choice: supplying options would hand
+participants the answer set."* What the device collects is therefore **not** a
+substitute for A1 or B5 and cannot serve H3. It is a different measurement: which
+quality someone attributes to a field, and at what depth.
+
+**Then the photograph, for four seconds.** Answering is what it costs. `DUMP` now
+reports `field,term,depth,minute_of_day`.
+
+**The six-fields screen is circular** — round previews on a round screen — and
+all six are baked at a single depth, **d = 0.80**, so they are comparable to each
+other. Previously each showed the depth its own field remembered, which made the
+contact sheet change shape depending on where each person had left the dial.
+Thumbnails dropped from 88×68×3 to 68×68×1, freeing 155 kB.
+
+**The reduction numeral is reduced too.** It is drawn from 34×56 alpha maps in
+blocks of k×k, k running 1 → 8 with depth: crisp and curved at the shallow end,
+eight steps of staircase at the deep end. The library's 5×7 font can only ever
+look pixelated when enlarged, so the glyphs are baked at a resolution there is
+something to throw away from (`tools/make_glyphs.py`). The number is reduced by
+the same logic as the image it measures.
+
+**The menu icon grew downward.** Top bar stays at y=345; bars are now 5 px on a
+10 px pitch and 30 px wide, and the touch circle went from r=46 to r=56.
+
+Build: 2,645,582 bytes, 84% of the huge_app partition.

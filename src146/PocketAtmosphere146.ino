@@ -36,9 +36,19 @@
 #include "buzz.h"
 #if IMAGE_FIELDS
 #include "rpc.h"
+#define GLYPHS_DEFINE
+#include "glyphs.h"
 #endif
 
-#define FW_VERSION "0.6-146"
+// La fotografia sin reducir NO es una posicion del dial. El recorrido empieza en
+// 0.20: el aparato nunca enseña la imagen de partida como una opcion mas, porque
+// verla una vez cierra la lectura de todas las demas. La unica vez que aparece
+// es despues de que alguien haya elegido una palabra, y por unos segundos.
+#define DEPTH_MIN 0.20f
+#define DEPTH_MAX 1.00f
+#define REVEAL_MS 4000
+
+#define FW_VERSION "0.7-146"
 
 // QSPI -> SPD2010. El reset del panel cuelga del expansor, asi que aqui va
 // GFX_NOT_DEFINED y se hace a mano antes de begin().
@@ -61,16 +71,12 @@ enum Mode : uint8_t { M_FIELD = 0, M_NAMES, M_BAND, M_INDEX, M_SET, M_KEY };
 static Mode mode = M_FIELD;
 
 static FieldState fs;
-static float depthByAtmos[ATMOS_COUNT];
+static float depthByAtmos[ATMOS_COUNT];   // cada campo recuerda la suya, >= DEPTH_MIN
 
 static uint32_t hudUntil = 0;       // la interfaz se retira sola
 static bool showDepthBig = false;   // lectura grande mientras se arrastra
 static uint32_t lastFrame = 0, lastDwell = 0;
 static bool screenOff = false;
-
-// teclado
-static char nameBuf[NAME_LEN] = "";
-static uint8_t nameLen = 0;
 
 // revelacion tras nombrar
 static uint32_t revealUntil = 0;
@@ -118,6 +124,7 @@ static void textMid(int cx, int y, const char *s, uint16_t col, uint8_t size) {
 #define NAV_MENU_X 206
 #define NAV_MENU_Y 352
 #define NAV_R 46
+#define NAV_MENU_R 56    // la hamburguesa es mas grande, su zona de toque tambien
 
 static bool inDisc(int x, int y, int cx, int cy, int r) {
   int dx = x - cx, dy = y - cy;
@@ -131,7 +138,9 @@ static void drawCorner(uint16_t col, bool back) {
     for (int i = 0; i < 9; i++) gfx->drawFastHLine(x - 5 + i, y + i, 1, col);
     gfx->drawFastHLine(x - 5, y, 20, col);
   } else {
-    for (int i = 0; i < 3; i++) gfx->fillRect(NAV_MENU_X - 10, NAV_MENU_Y - 7 + i * 7, 20, 3, col);
+    // Crece hacia ABAJO: la barra de arriba se queda donde estaba (y=345) y las
+    // otras dos bajan, asi que el icono no se mueve de sitio, solo engorda.
+    for (int i = 0; i < 3; i++) gfx->fillRect(NAV_MENU_X - 15, NAV_MENU_Y - 7 + i * 10, 30, 5, col);
   }
 }
 
@@ -144,9 +153,75 @@ static void drawNextCorner(uint16_t col) {
 
 static bool inCorner(int x, int y) {
   return inDisc(x, y, NAV_BACK_X, NAV_AXIS_Y, NAV_R) ||
-         inDisc(x, y, NAV_MENU_X, NAV_MENU_Y, NAV_R);
+         inDisc(x, y, NAV_MENU_X, NAV_MENU_Y + 4, NAV_MENU_R);
 }
 static bool inNextCorner(int x, int y) { return inDisc(x, y, NAV_NEXT_X, NAV_AXIS_Y, NAV_R); }
+
+#if IMAGE_FIELDS
+// ---------------------------------------------------------------------------
+// LA CIFRA, REDUCIDA COMO LA IMAGEN
+//
+// El numero se dibuja desde mapas de alfa de 34x56 en bloques de k x k, con k
+// creciendo con la profundidad: k=1 con poca reduccion -la cifra entera, con sus
+// curvas- y k=8 con mucha. La fuente de la libreria es de 5x7 y agrandada solo
+// puede salir a bloques; para poder ir de suave a tosco hace falta empezar con
+// resolucion de sobra y tirarla a proposito.
+//
+// Es la misma operacion que le esta pasando a la imagen, aplicada al numero que
+// la mide. Que el numero se vuelva ilegible a la vez que la escena es el punto.
+// ---------------------------------------------------------------------------
+static int glyphIndex(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c == '.') return 10;
+  return -1;
+}
+
+static void drawReducedNumber(int cx, int cy, float value, float depth, uint16_t ink) {
+  char buf[8];
+  snprintf(buf, sizeof buf, "%.2f", value);
+  int n = (int)strlen(buf);
+
+  float t = (depth - DEPTH_MIN) / (DEPTH_MAX - DEPTH_MIN);
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  int k = 1 + (int)(t * 7.0f + 0.5f);          // 1..8
+
+  int total = n * GLYPH_W, x0 = cx - total / 2, y0 = cy - GLYPH_H / 2;
+  uint16_t *fb = gfx->getFramebuffer();
+  int ir = (ink >> 11) & 0x1F, ig = (ink >> 5) & 0x3F, ib = ink & 0x1F;
+
+  for (int c = 0; c < n; c++) {
+    int gi = glyphIndex(buf[c]);
+    if (gi < 0) continue;
+    const uint8_t *g = GLYPHS[gi];
+    for (int by = 0; by < GLYPH_H; by += k) {
+      for (int bx = 0; bx < GLYPH_W; bx += k) {
+        // media del bloque: al agrandar k la cifra no se recorta, se promedia,
+        // que es lo que la deja gruesa en vez de dentada.
+        uint32_t acc = 0, cnt = 0;
+        for (int y = by; y < by + k && y < GLYPH_H; y++)
+          for (int x = bx; x < bx + k && x < GLYPH_W; x++) { acc += g[y * GLYPH_W + x]; cnt++; }
+        uint32_t a = cnt ? acc / cnt : 0;
+        if (a < 8) continue;
+        for (int y = by; y < by + k && y < GLYPH_H; y++) {
+          int py = y0 + y;
+          if (py < 0 || py >= LCD_HEIGHT) continue;
+          uint16_t *row = fb + (size_t)py * LCD_WIDTH;
+          for (int x = bx; x < bx + k && x < GLYPH_W; x++) {
+            int px = x0 + c * GLYPH_W + x;
+            if (px < 0 || px >= LCD_WIDTH) continue;
+            uint16_t d = row[px];
+            int dr = (d >> 11) & 0x1F, dg = (d >> 5) & 0x3F, db = d & 0x1F;
+            dr += ((ir - dr) * (int)a) >> 8;
+            dg += ((ig - dg) * (int)a) >> 8;
+            db += ((ib - db) * (int)a) >> 8;
+            row[px] = (uint16_t)((dr << 11) | (dg << 5) | db);
+          }
+        }
+      }
+    }
+  }
+}
+#endif
 
 static void drawBattery(int x, int y, uint16_t col) {
   int pct = boardBatteryPct();
@@ -227,6 +302,22 @@ static void renderFieldPixels(uint32_t now) {
 
 static void renderField(uint32_t now) {
 #if IMAGE_FIELDS
+  // LA REVELACION. Despues de responder -y solo entonces- aparece la fotografia
+  // de la que salio el campo, unos segundos, y se vuelve. Es lo unico que se
+  // paga con una respuesta; enseñarla antes cerraria la lectura de todo lo
+  // demas, que es exactamente lo que el aparato existe para no hacer.
+  if (revealUntil && now < revealUntil) {
+    uint16_t *fb = gfx->getFramebuffer();
+    const uint16_t *src = ATMOS[fs.atmos].rgb;
+    for (int32_t i = 0; i < (int32_t)LCD_WIDTH * LCD_HEIGHT; i++) fb[i] = FIELD_OUT(src[i]);
+    fieldMaskCircle(fb, 0);
+    if (storeSettings().reveal) {
+      uint16_t ink = 0xE73C;
+      gfx->fillRect(60, 320, 292, 22, 0x0000);
+      textMid(LCD_CX, 326, ATMOS[fs.atmos].source, ink, 1);
+    }
+    return;
+  }
   renderFieldPixels(now);
 #else
   fieldRender(gfx->getFramebuffer(), fs);
@@ -239,15 +330,7 @@ static void renderField(uint32_t now) {
   // salida que hay, y una salida que desaparece no es una salida.
   drawCorner(ink, false);
 
-  if (revealUntil && now < revealUntil) {
-    // tras nombrar, si el ajuste esta activo, se dice de donde venia
-    const char *src = ATMOS[fs.atmos].source;
-    gfx->fillRect(60, 176, 292, 44, groundOf(fs));
-    textMid(LCD_CX, 184, "it was made from", inkOfGround(fs), 1);
-    textMid(LCD_CX, 202, src, inkOfGround(fs), 1);
-  } else if (revealUntil && now >= revealUntil) {
-    revealUntil = 0;
-  }
+  if (revealUntil && now >= revealUntil) revealUntil = 0;
 
   if (!hud) return;
 
@@ -257,7 +340,7 @@ static void renderField(uint32_t now) {
   // barra de profundidad: linea fina abajo, llena hasta el valor actual
   int by = 306, bx = 96, bw = 220;
   gfx->drawFastHLine(bx, by, bw, ink);
-  int px = bx + (int)(bw * fs.depth);
+  int px = bx + (int)(bw * (fs.depth - DEPTH_MIN) / (DEPTH_MAX - DEPTH_MIN));
   gfx->fillRect(px - 1, by - 5, 3, 11, ink);
 
   char lab[24];
@@ -265,17 +348,21 @@ static void renderField(uint32_t now) {
   textMid(LCD_CX, by + 12, lab, ink, 1);
 
   if (showDepthBig) {
+#if IMAGE_FIELDS
+    drawReducedNumber(LCD_CX, 190, fs.depth, fs.depth, ink);
+#else
     snprintf(lab, sizeof lab, "%.2f", fs.depth);
     textMid(LCD_CX, 178, lab, ink, 5);
+#endif
     snprintf(lab, sizeof lab, "%d colours", fieldLevels(fs.depth));
-    textMid(LCD_CX, 232, lab, ink, 1);
+    textMid(LCD_CX, 240, lab, ink, 1);
   } else {
     uint8_t n = storeNameCount(fs.atmos);
     if (n) {
-      snprintf(lab, sizeof lab, "%u names", (unsigned)n);
+      snprintf(lab, sizeof lab, "%u given", (unsigned)n);
       textMid(LCD_CX, 112, lab, ink, 1);
     } else {
-      textMid(LCD_CX, 112, "hold to name it", ink, 1);
+      textMid(LCD_CX, 112, "hold to answer", ink, 1);
     }
   }
 }
@@ -368,12 +455,12 @@ static void renderBand() {
 // 320x240 es apaisada: la rejilla gira a 3 x 2 y las muestras se ensanchan.
 #define IDX_COLS 3
 #define IDX_ROWS 2
-#define IDX_W 88
+#define IDX_W 68
 #define IDX_H 68
-#define IDX_GAPX 12
-#define IDX_GAPY 30
+#define IDX_GAPX 26
+#define IDX_GAPY 28
 #define IDX_X ((LCD_WIDTH - IDX_COLS * IDX_W - (IDX_COLS - 1) * IDX_GAPX) / 2)
-#define IDX_Y 118
+#define IDX_Y 120
 
 static void renderIndex() {
   uint16_t bg = groundOf(fs), ink = inkOfGround(fs);
@@ -394,18 +481,17 @@ static void renderIndex() {
     // De los peldanos horneados se coge el mas cercano a la profundidad que
     // ese campo recuerda, asi que la rejilla dice tambien donde lo dejo cada
     // cual.
-    int lvl = 0;
-    float best = 9.0f;
-    for (int k = 0; k < IMG_TH_LEVELS; k++) {
-      float e = fabsf(depthByAtmos[i] - IMG_TH_DEPTH[k]);
-      if (e < best) { best = e; lvl = k; }
-    }
-    const uint16_t *th = ATMOS[i].thumb + (size_t)lvl * IMG_TH_W * IMG_TH_H;
+    const uint16_t *th = ATMOS[i].thumb;
     uint16_t *fb = gfx->getFramebuffer();
+    const int rr = IDX_W / 2, r2 = rr * rr;
     for (int ty = 0; ty < IDX_H; ty++) {
       const uint16_t *sr = th + (size_t)ty * IMG_TH_W;
       uint16_t *dr = fb + (size_t)(y + ty) * LCD_WIDTH + x;
-      for (int tx = 0; tx < IDX_W; tx++) dr[tx] = FIELD_OUT(sr[tx]);
+      int dy = ty - rr;
+      for (int tx = 0; tx < IDX_W; tx++) {
+        int dx = tx - rr;
+        if (dx * dx + dy * dy <= r2) dr[tx] = FIELD_OUT(sr[tx]);
+      }
     }
 #else
     FieldState s = fs;
@@ -414,10 +500,10 @@ static void renderIndex() {
     s.t = fs.t * 0.6f + i * 7.3f;
     fieldSwatch(gfx->getFramebuffer(), LCD_WIDTH, LCD_HEIGHT, x, y, IDX_W, IDX_H, s);
 #endif
-    if (i == fs.atmos) gfx->drawRect(x - 2, y - 2, IDX_W + 4, IDX_H + 4, ink);
+    if (i == fs.atmos) gfx->drawCircle(x + IDX_W / 2, y + IDX_H / 2, IDX_W / 2 + 3, ink);
     char lab[16];
     snprintf(lab, sizeof lab, "%s  %u", ATMOS_NUMERAL[i], (unsigned)storeNameCount(i));
-    textAt(x, y + IDX_H + 4, lab, ink, 1);
+    textMid(x + IDX_W / 2, y + IDX_H + 6, lab, ink, 1);
   }
   textMid(LCD_CX, 330, "tap one", ink, 1);
 }
@@ -490,70 +576,71 @@ static void settingsTap(int16_t x, int16_t y) {
 }
 
 // ---------------------------------------------------------------------------
-// teclado para nombrar
+// LA RESPUESTA
+//
+// Antes esto era un teclado de 28 teclas en un disco de 412 px. No funcionaba, y
+// no por el tamano de las teclas: escribir una palabra letra a letra con el
+// pulgar es una tarea distinta de mirar un campo, y la interrumpe.
+//
+// En su lugar, SEIS TERMINOS, tomados de la propia bateria del estudio: son los
+// descriptores de Wang, Luo et al. (2014) que el instrumento usa en el grupo C,
+// los dos que cargan mas alto en cada una de las tres dimensiones Y se mantienen
+// estables entre las soluciones factoriales masculina y femenina:
+//
+//     coziness    cosy (0.75/0.78)      relaxed (0.72/0.76)
+//     liveliness  lively (0.83/0.82)    inspiring (0.78/0.77)
+//     tenseness   tense (0.67/0.82)     oppressive (0.84/0.62)
+//
+// Se elige ese grupo y no el de emociones esteticas (AESTHEMOS, grupo D) porque
+// el aparato enseña UN ESPACIO: el grupo C pregunta como es el sitio, el grupo D
+// que te paso a ti. Mezclarlos borraria justo la distincion que el instrumento
+// se toma el trabajo de mantener. Para cambiar de bateria basta con reescribir
+// esta tabla; el formato de guardado es el mismo.
+//
+// ADVERTENCIA METODOLOGICA, y va en serio: una lista cerrada INFLA el acuerdo
+// entre participantes. El propio protocolo lo dice de B5 -"deliberadamente no es
+// una eleccion forzada: dar opciones les entrega el conjunto de respuestas"-. Lo
+// que sale de aqui NO sustituye a A1 ni a B5 y no sirve para H3. Es otra cosa:
+// que cualidad le atribuye alguien a un campo, y a que profundidad lo hace.
 // ---------------------------------------------------------------------------
 
-static const char *KB_ROWS[4] = { "ABCDEFG", "HIJKLMN", "OPQRSTU", "VWXYZ -" };
-#define KB_X 73
-#define KB_Y 172
-#define KB_KW 38
-#define KB_KH 32
+static const char *const TERMS[6] = {
+  "cosy", "relaxed", "lively", "inspiring", "tense", "oppressive",
+};
+#define TERM_N 6
+#define TERM_Y0 120
+#define TERM_DY 38
 
 static void renderKeyboard() {
   uint16_t bg = groundOf(fs), ink = inkOfGround(fs);
   gfx->fillScreen(bg);
-  textMid(LCD_CX, 74, "WHAT IS IT?", ink, 2);
-  drawCorner(ink, true);   // salir sin nombrar: no todo el mundo quiere hacerlo
-  textMid(LCD_CX, 100, "your word, not ours", ink, 1);
+  textMid(LCD_CX, 70, "WHAT WAS IT LIKE?", ink, 2);
+  drawCorner(ink, true);   // salir sin responder: no todo el mundo quiere
+  textMid(LCD_CX, 96, "pick one, or come back", ink, 1);
 
-  gfx->drawRect(76, 122, 260, 34, ink);
-  textAt(88, 132, nameBuf, ink, 2);
-
-  for (int r = 0; r < 4; r++) {
-    for (int c = 0; c < 7; c++) {
-      char ch = KB_ROWS[r][c];
-      int x = KB_X + c * KB_KW, y = KB_Y + r * KB_KH;
-      gfx->drawRect(x, y, KB_KW - 2, KB_KH - 2, ink);
-      char s[2] = { ch, 0 };
-      textAt(x + 12, y + 10, s, ink, 1);
-    }
+  for (int i = 0; i < TERM_N; i++) {
+    int y = TERM_Y0 + i * TERM_DY;
+    textMid(LCD_CX, y, TERMS[i], ink, 2);
   }
-  int y = KB_Y + 4 * KB_KH;
-  gfx->drawRect(KB_X, y + 6, 116, 30, ink);
-  textAt(KB_X + 40, y + 16, "DEL", ink, 1);
-  gfx->drawRect(KB_X + 150, y + 6, 116, 30, ink);
-  textAt(KB_X + 196, y + 16, "OK", ink, 1);
 }
 
 static void keyboardTap(int16_t x, int16_t y) {
-  int r = (y - KB_Y) / KB_KH, c = (x - KB_X) / KB_KW;
-  if (r >= 0 && r < 4 && c >= 0 && c < 7) {
-    if (nameLen < NAME_LEN - 1) {
-      nameBuf[nameLen++] = KB_ROWS[r][c];
-      nameBuf[nameLen] = 0;
-      buzzPing(1200, 22);
+  (void)x;
+  for (int i = 0; i < TERM_N; i++) {
+    int cy = TERM_Y0 + i * TERM_DY;
+    if (y < cy - 12 || y > cy + 26) continue;
+    uint32_t e = 0;
+    if (rtcOk) {
+      RTC_DateTime t = rtc.getDateTime();
+      e = (uint32_t)t.getHour() * 3600 + t.getMinute() * 60;
     }
+    storeAddName(fs.atmos, TERMS[i], fs.depth, e);
+    buzzPing(1400, 90);
+    // Y AHORA si: la fotografia, unos segundos. Se paga con una respuesta.
+    revealUntil = millis() + REVEAL_MS;
+    mode = M_FIELD;
+    hudUntil = 0;             // sin interfaz encima de la revelacion
     return;
-  }
-  int by = KB_Y + 4 * KB_KH + 6;
-  if (y >= by && y <= by + 30) {
-    if (x < KB_X + 116) {
-      if (nameLen) nameBuf[--nameLen] = 0;
-      buzzPing(600, 22);
-    } else if (x >= KB_X + 150) {
-      if (nameLen) {
-        uint32_t e = 0;
-        if (rtcOk) {
-          RTC_DateTime t = rtc.getDateTime();
-          e = (uint32_t)t.getHour() * 3600 + t.getMinute() * 60;
-        }
-        storeAddName(fs.atmos, nameBuf, fs.depth, e);
-        buzzPing(1400, 90);
-        if (storeSettings().reveal) revealUntil = millis() + 3500;
-      }
-      mode = M_FIELD;
-      hudUntil = millis() + 2500;
-    }
   }
 }
 
@@ -562,8 +649,6 @@ static void keyboardTap(int16_t x, int16_t y) {
 // ---------------------------------------------------------------------------
 
 static void openKeyboard() {
-  nameBuf[0] = 0;
-  nameLen = 0;
   mode = M_KEY;
   buzzPing(700, 60);
 }
@@ -611,7 +696,7 @@ static void handleTouch(uint32_t now) {
       if (gAxis == 1) {
         // arrastrar hacia arriba reduce mas: el gesto "sube" hacia lo evocativo
         float d = gDepth0 - (float)dy / 200.0f;
-        fs.depth = d < 0 ? 0 : (d > 1 ? 1 : d);
+        fs.depth = d < DEPTH_MIN ? DEPTH_MIN : (d > DEPTH_MAX ? DEPTH_MAX : d);
         showDepthBig = true;
         hudUntil = now + 2500;
       } else if (gAxis == 0 && !gLongFired && now - gStart > 900 &&
@@ -779,7 +864,7 @@ static void handleSerial() {
   String line = Serial.readStringUntil('\n');
   line.trim();
   if (line == "DUMP") {
-    Serial.println("field,name,depth,minute_of_day");
+    Serial.println("field,term,depth,minute_of_day");
     for (int a = 0; a < ATMOS_COUNT; a++)
       for (uint8_t i = 0; i < storeNameCount(a); i++) {
         const NameRec &r = storeName(a, i);
@@ -880,7 +965,12 @@ void setup() {
   rtcOk = rtc.begin(Wire, I2C_SDA_PIN, I2C_SCL_PIN);
   if (!rtcOk) Serial.println("PCF85063 not found");
 
-  for (int i = 0; i < ATMOS_COUNT; i++) depthByAtmos[i] = storeSettings().lastDepth / 255.0f;
+  for (int i = 0; i < ATMOS_COUNT; i++) {
+    float d = storeSettings().lastDepth / 255.0f;
+    // Un aparato guardado con la version anterior puede traer una profundidad
+    // por debajo del suelo nuevo; se sube, no se enseña la fotografia.
+    depthByAtmos[i] = d < DEPTH_MIN ? DEPTH_MIN : (d > DEPTH_MAX ? DEPTH_MAX : d);
+  }
   fs.atmos = storeSettings().lastAtmos;
   fs.depth = depthByAtmos[fs.atmos];
 

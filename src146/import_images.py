@@ -42,8 +42,14 @@ PAL = 16
 # Tres peldanos, y en el aparato se elige el mas cercano a la profundidad que
 # cada campo recuerda, para que la hoja de contactos diga tambien donde dejo
 # cada campo quien lo miro.
-TH_W, TH_H = 88, 68
-TH_DEPTHS = [0.25, 0.50, 0.75]
+# Cuadradas, porque en la rejilla se recortan en CIRCULO: la pantalla es un
+# disco y los seis campos tambien deberian serlo.
+# Un solo peldano, d = 0.80. Antes eran tres y se elegia el mas cercano a la
+# profundidad recordada, pero eso hacia que la hoja de contactos cambiara de
+# aspecto segun donde hubiera dejado cada cual el dial; para elegir campo lo que
+# hace falta es que los seis se vean COMPARABLES entre si.
+TH_W, TH_H = 68, 68
+TH_DEPTHS = [0.80]
 TH_TEXTURE = 0.10
 
 
