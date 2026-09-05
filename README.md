@@ -57,6 +57,7 @@ Over USB at 115200 baud:
 | `SOURCES` | where the fields came from (deliberately not on screen) |
 | `RESET` | clear the words |
 | `TEST` | speaker sweep, motor ramp, ring white — says what it finds |
+| `TIME` | per-stage milliseconds of a cold reduction at both levels, and free PSRAM |
 | `RING <gpio> [count]` | re-wire the ring to another pin and flash it white, without recompiling |
 
 `TEST` and `RING` exist because "it doesn't work" is not a diagnosis. The
@@ -256,4 +257,32 @@ which by construction is centred on your depth.
     src146/rpc.h     the reasoning and the constants
     src146/rpc.cpp   the operation, the cache and the schedule
 
-Build: 2,567,846 bytes, 81% of the huge_app partition.
+### Why the field was laggy, and what fixed it
+
+The first cut recomputed the whole reduction every frame, even when nothing had
+changed. The menus were fine because menus compute nothing — the symptom pointed
+straight at the cause. Three changes, in order of what they were worth:
+
+**Cache by state, not by depth.** Q and the blur's box widths are integers, so
+two depths that land on the same state give the same output *bit for bit*.
+Dragging half a millimetre almost always stays inside one state. The cache key
+is (atmos, Q, box widths); a hit is a blit. Standing still now costs nothing at
+all — before, it cost a full reduction 24 times a second.
+
+**A coarse level for the drag.** While the thumb is down the field renders at
+103x103 and quadruples — a quarter of the work, and against 206 you can barely
+tell (the field is already blurred). The whole depth range is only 63 states at
+that size, so a 40-slot LRU cache means a second pass over the range computes
+nothing. On release it does one fine reduction and stops.
+
+**16-bit blur buffers, and a blocked vertical pass.** The three box blurs are
+the dominant cost and they are pure PSRAM traffic, so int32 -> int16 nearly
+halves it. The vertical pass now walks 16 columns at once instead of one: a
+column walk strides 412 bytes and throws away most of every PSRAM burst.
+
+Whether that is enough is a question about the board, not about the code, so the
+board answers it: **`TIME` over USB** reports measured milliseconds per stage
+(blur / keys / sort / scatter) at both levels, plus free PSRAM. "It feels slow"
+is not a diagnosis.
+
+Build: 2,571,454 bytes, 81% of the huge_app partition.

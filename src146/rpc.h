@@ -64,21 +64,38 @@
 // se respira con los que ya existen. El aparato nunca se queda parado esperando.
 // ---------------------------------------------------------------------------
 
+// Nivel FINO: lo que se mira. 206*206 = 42436 < 65536, asi que los indices de
+// la ordenacion caben en uint16 y el trafico a PSRAM se parte por la mitad.
 #define RPC_W 206
 #define RPC_H 206
-#define RPC_N ((int32_t)RPC_W * RPC_H)      // 42436, cabe en uint16 -> indices de 16 bits
-#define RPC_SCALE 2                          // 206 * 2 = 412
+#define RPC_N ((int32_t)RPC_W * RPC_H)
+// Nivel GRUESO: lo que se ve mientras el pulgar arrastra. La cuarta parte del
+// trabajo, y a simple vista apenas se distingue: el campo ya esta desenfocado.
+#define RPC_CW 103
+#define RPC_CH 103
 #define RPC_TEXTURE 0.10f
 #define RPC_STATES_MAX 48
+#define RPC_COARSE_SLOTS 40   // el recorrido entero tiene 63 estados a 103 px
 #define RPC_NOISE_SEED 12345
+
+// Milisegundos por etapa de la ultima reduccion, medidos EN LA PLACA. El
+// comando TIME por USB los imprime: "va lento" no es un diagnostico.
+struct RpcTiming {
+  uint16_t w = 0, blur = 0, keys = 0, sort = 0, scatter = 0, total = 0;
+};
+const RpcTiming &rpcTiming();
 
 // Mapa profundidad -> parametros, identico al sketch.
 int   rpcQForDepth(float d);
 float rpcSigmaForDepth(float d, int w);
 
-// Una reduccion suelta, a pantalla completa. Es lo que se ve mientras el pulgar
-// esta puesto: quieto, sin respirar.
+// Una reduccion a pantalla completa, en el nivel fino. Cacheada por estado: si
+// (ambiente, Q, cajas) no ha cambiado, esto es solo un volcado.
 bool rpcStill(uint16_t *out412, int atmos, float depth);
+
+// Lo mismo en el nivel grueso, con una cache de todo el recorrido. Es lo que se
+// usa MIENTRAS SE ARRASTRA, y es lo que hace que el pulgar mueva algo vivo.
+bool rpcDrag(uint16_t *out412, int atmos, float depth);
 
 // --- respiracion -------------------------------------------------------------
 // Fija el recorrido y el ambiente. Si cambia algo, tira la cache.
@@ -94,3 +111,7 @@ int  rpcBreathTotal();
 bool rpcBreathFrame(uint16_t *out412, uint32_t now_ms, uint16_t ms_per_frame);
 // Suelta la cache (al cambiar de ambiente, o si hace falta memoria).
 void rpcBreathFree();
+
+// Invalida las caches de fotograma sin soltar la memoria. Solo lo usa TIME:
+// cronometrar un volcado de cache mediria cero y no diria nada.
+void rpcForget();

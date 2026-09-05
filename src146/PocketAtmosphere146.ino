@@ -167,27 +167,38 @@ static void drawBattery(int x, int y, uint16_t col) {
 
 #if IMAGE_FIELDS
 // ---------------------------------------------------------------------------
-// LA RESPIRACION
+// EL CAMPO, FOTOGRAMA A FOTOGRAMA
 //
-// Quieto en la mano, el campo respira: la profundidad oscila alrededor de donde
-// la dejo el pulgar. Mientras se arrastra NO respira -seria pelearse con la
-// mano-, y vuelve a hacerlo despues de un rato sin tocarlo. Es el gesto que le
-// corresponde a un objeto atmosferico: se esta quieto mientras lo manejas y
-// sigue a lo suyo cuando lo sueltas.
+// La primera version recalculaba la reduccion entera en cada vuelta de loop(),
+// incluso cuando no habia cambiado nada. Eso es lo que hacia que el campo fuera
+// a trompicones mientras los menus -que no calculan nada- iban finos: el
+// sintoma senalaba el sitio exacto.
 //
-// El ciclo se calcula UNA vez y se guarda. Se construye un estado por vuelta de
-// loop(), asi que el aparato responde desde el primer instante y la respiracion
-// se va llenando durante los primeros segundos en vez de hacerte esperar.
+// Ahora hay tres regimenes y ninguno recalcula de mas:
+//
+//   arrastrando   nivel grueso (103 px, la cuarta parte del trabajo) con una
+//                 cache de TODO el recorrido. Ademas, Q y las anchuras de las
+//                 cajas son enteras, asi que mover el dedo dentro de un mismo
+//                 estado da el mismo resultado bit a bit y no cuesta nada.
+//   quieto        nivel fino (206 px), un solo hueco de cache. Mientras no
+//                 cambie el estado esto es un volcado.
+//   respirando    el ciclo cacheado; tambien un volcado.
+//
+// La unica reduccion fina que queda es la del instante en que se suelta el
+// dedo: una sola, y despues el aparato ya no calcula nada hasta que lo toques.
 // ---------------------------------------------------------------------------
 #define BREATH_SPAN 0.22f     // +- alrededor de la profundidad elegida
-#define BREATH_MS   330       // por fotograma: el ciclo entero dura unos 19 s
+#define BREATH_MS   330       // por fotograma: el ciclo entero dura unos 17 s
 #define BREATH_WAIT 1500      // hay que soltarlo este rato para que arranque
 static uint32_t lastInteract = 0;
 
 static void renderFieldPixels(uint32_t now) {
   uint16_t *fb = gfx->getFramebuffer();
-  bool idle = storeSettings().breathe && !touchDown &&
-              (now - lastInteract > BREATH_WAIT);
+
+  // Con el dedo encima manda la respuesta, no la resolucion.
+  if (touchDown) { rpcDrag(fb, fs.atmos, fs.depth); return; }
+
+  bool idle = storeSettings().breathe && (now - lastInteract > BREATH_WAIT);
   if (!idle) { rpcStill(fb, fs.atmos, fs.depth); return; }
 
   float lo = fs.depth - BREATH_SPAN, hi = fs.depth + BREATH_SPAN;
@@ -754,6 +765,33 @@ static void handleSerial() {
     Serial.println("-- speaker --");
     buzzSelfTest([](const char *m) { Serial.println(m); });
     Serial.println("END");
+#if IMAGE_FIELDS
+  } else if (line == "TIME") {
+    // Los milisegundos reales de la placa, por etapa y por nivel. Es la unica
+    // forma honesta de afinar esto: aqui no se adivina el reloj de nadie.
+    for (int lvl = 0; lvl < 2; lvl++) {
+      int w = lvl ? RPC_CW : RPC_W;
+      Serial.printf("-- %d x %d --\n", w, w);
+      for (int k = 0; k < 3; k++) {
+        float d = 0.30f + 0.225f * k;
+        rpcForget();                       // en frio: medir la cache no dice nada
+        uint32_t t0 = millis();
+        if (lvl) rpcDrag(gfx->getFramebuffer(), fs.atmos, d);
+        else     rpcStill(gfx->getFramebuffer(), fs.atmos, d);
+        uint32_t wall = millis() - t0;
+        const RpcTiming &t = rpcTiming();
+        Serial.printf("d=%.2f Q=%2d  blur %3u  keys %3u  sort %3u  scatter %3u"
+                      "  reduce %3u  con volcado %3u ms\n",
+                      d, rpcQForDepth(d), t.blur, t.keys, t.sort, t.scatter,
+                      t.total, wall);
+      }
+    }
+    Serial.printf("respiracion: %d de %d estados listos\n",
+                  rpcBreathReady(), rpcBreathTotal());
+    Serial.printf("PSRAM libre %u de %u bytes\n",
+                  (unsigned)ESP.getFreePsram(), (unsigned)ESP.getPsramSize());
+    Serial.println("END");
+#endif
   } else if (line == "RESET") {
     for (int a = 0; a < ATMOS_COUNT; a++) storeClearNames(a);
     Serial.println("OK names cleared");
