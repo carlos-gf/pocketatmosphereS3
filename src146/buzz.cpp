@@ -1,6 +1,7 @@
 #include "buzz.h"
 #include "board_ws146.h"
 #include <math.h>
+#include <string.h>
 #include <driver/i2s_std.h>
 
 // ---------------------------------------------------------------------------
@@ -46,7 +47,10 @@ void buzzBegin() {
       },
   };
   if (i2s_channel_init_std_mode(txChan, &sc) != ESP_OK) { txChan = nullptr; return; }
-  i2s_channel_enable(txChan);
+  // NO se habilita aqui. Un canal I2S habilitado sin nadie escribiendo vacia su
+  // DMA y repite lo ultimo que hubiera: eso es el ruido continuo de fondo, con
+  // los tonos reales apareciendo por encima. Se enciende para cada nota y se
+  // apaga al terminar, asi que entre acontecimientos hay silencio de verdad.
 }
 
 void buzzSetEnabled(bool on) { enabled = on; }
@@ -56,6 +60,7 @@ void buzzSilence() {}
 // unos milisegundos seguidos.
 static void playTone(float hz, uint16_t ms, float gain) {
   if (!txChan || !enabled) return;
+  i2s_channel_enable(txChan);
   const int CH = 256;
   static int16_t buf[CH * 2];
   uint32_t total = (uint32_t)((uint64_t)SR * ms / 1000);
@@ -80,6 +85,14 @@ static void playTone(float hz, uint16_t ms, float gain) {
     i2s_channel_write(txChan, buf, n * 4, &wrote, 40);
     done += n;
   }
+  // Se vacia la cola con silencio antes de apagar, para que no quede medio
+  // buffer sonando en bucle.
+  memset(buf, 0, sizeof buf);
+  for (int i = 0; i < 4; i++) {
+    size_t wrote = 0;
+    i2s_channel_write(txChan, buf, sizeof buf, &wrote, 40);
+  }
+  i2s_channel_disable(txChan);
 }
 
 void buzzPing(uint16_t hz, uint16_t ms) { playTone(hz, ms, 0.42f); }

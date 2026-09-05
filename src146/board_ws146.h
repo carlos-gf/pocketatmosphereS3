@@ -73,10 +73,15 @@ public:
 // la version anterior para no tocar la logica de gestos.
 struct TouchShim {
   int getPoint(int16_t *x, int16_t *y, uint8_t) {
-    Touch_Loop();
-    if (touch_data.touch_num == 0) return 0;
-    *x = (int16_t)touch_data.rpt[0].x;
-    *y = (int16_t)touch_data.rpt[0].y;
+    // OJO: NO llamar a Touch_Loop(). Esa funcion del ejemplo de Waveshare lee
+    // el chip, imprime la coordenada por serie y acto seguido pone
+    // touch_data.touch_num = 0. Leer touch_data despues siempre daba cero: el
+    // tactil funcionaba y el dato se tiraba antes de mirarlo.
+    uint16_t tx = 0, ty = 0;
+    uint8_t n = 0;
+    if (!Touch_Get_xy(&tx, &ty, nullptr, &n, 1) || n == 0) return 0;
+    *x = (int16_t)tx;
+    *y = (int16_t)ty;
     return 1;
   }
 };
