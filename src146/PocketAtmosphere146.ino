@@ -34,8 +34,11 @@
 #include "field.h"
 #include "store.h"
 #include "buzz.h"
+#if IMAGE_FIELDS
+#include "rpc.h"
+#endif
 
-#define FW_VERSION "0.1-146"
+#define FW_VERSION "0.4-146"
 
 // QSPI -> SPD2010. El reset del panel cuelga del expansor, asi que aqui va
 // GFX_NOT_DEFINED y se hace a mano antes de begin().
@@ -162,8 +165,47 @@ static void drawBattery(int x, int y, uint16_t col) {
 // pantalla principal: el campo
 // ---------------------------------------------------------------------------
 
+#if IMAGE_FIELDS
+// ---------------------------------------------------------------------------
+// LA RESPIRACION
+//
+// Quieto en la mano, el campo respira: la profundidad oscila alrededor de donde
+// la dejo el pulgar. Mientras se arrastra NO respira -seria pelearse con la
+// mano-, y vuelve a hacerlo despues de un rato sin tocarlo. Es el gesto que le
+// corresponde a un objeto atmosferico: se esta quieto mientras lo manejas y
+// sigue a lo suyo cuando lo sueltas.
+//
+// El ciclo se calcula UNA vez y se guarda. Se construye un estado por vuelta de
+// loop(), asi que el aparato responde desde el primer instante y la respiracion
+// se va llenando durante los primeros segundos en vez de hacerte esperar.
+// ---------------------------------------------------------------------------
+#define BREATH_SPAN 0.22f     // +- alrededor de la profundidad elegida
+#define BREATH_MS   330       // por fotograma: el ciclo entero dura unos 19 s
+#define BREATH_WAIT 1500      // hay que soltarlo este rato para que arranque
+static uint32_t lastInteract = 0;
+
+static void renderFieldPixels(uint32_t now) {
+  uint16_t *fb = gfx->getFramebuffer();
+  bool idle = storeSettings().breathe && !touchDown &&
+              (now - lastInteract > BREATH_WAIT);
+  if (!idle) { rpcStill(fb, fs.atmos, fs.depth); return; }
+
+  float lo = fs.depth - BREATH_SPAN, hi = fs.depth + BREATH_SPAN;
+  if (lo < 0.05f) { hi += 0.05f - lo; lo = 0.05f; }
+  if (hi > 0.98f) { lo -= hi - 0.98f; hi = 0.98f; }
+  if (lo < 0.05f) lo = 0.05f;
+  rpcBreathSet(fs.atmos, lo, hi);
+  rpcBreathBuild();                      // como mucho un estado por fotograma
+  if (!rpcBreathFrame(fb, now, BREATH_MS)) rpcStill(fb, fs.atmos, fs.depth);
+}
+#endif
+
 static void renderField(uint32_t now) {
+#if IMAGE_FIELDS
+  renderFieldPixels(now);
+#else
   fieldRender(gfx->getFramebuffer(), fs);
+#endif
   fieldMaskCircle(gfx->getFramebuffer(), 0);   // fuera del disco no hay pantalla
 
   bool hud = (now < hudUntil) || showDepthBig;
@@ -337,10 +379,10 @@ static void renderIndex() {
 
 struct Row { int y; const char *label; };
 static const Row SET_ROWS[] = {
-  { 128, "hour" }, { 160, "minute" }, { 192, "sound" },
-  { 224, "reveal source" }, { 256, "brightness" },
+  { 122, "hour" }, { 152, "minute" }, { 182, "sound" },
+  { 212, "reveal source" }, { 242, "breathing" }, { 272, "brightness" },
 };
-#define SET_N 5
+#define SET_N 6
 static int setHour = 12, setMin = 0;
 
 static void renderSettings() {
@@ -359,6 +401,7 @@ static void renderSettings() {
       case 1: snprintf(v, sizeof v, "%02d", setMin); break;
       case 2: snprintf(v, sizeof v, "%s", st.sound ? "on" : "off"); break;
       case 3: snprintf(v, sizeof v, "%s", st.reveal ? "on" : "off"); break;
+      case 4: snprintf(v, sizeof v, "%s", st.breathe ? "on" : "off"); break;
       default: snprintf(v, sizeof v, "%u", (unsigned)st.bright); break;
     }
     textAt(244, SET_ROWS[i].y, v, ink, 1);
@@ -367,16 +410,16 @@ static void renderSettings() {
     gfx->drawRect(286, SET_ROWS[i].y - 6, 20, 20, ink);
     textAt(292, SET_ROWS[i].y, "+", ink, 1);
   }
-  textMid(LCD_CX, 300, "USB: DUMP  BAND  TEST", ink, 1);
+  textMid(LCD_CX, 306, "USB: DUMP  BAND  TEST", ink, 1);
   char fw[32];
   snprintf(fw, sizeof fw, "Pocket Atmosphere v%s", FW_VERSION);
-  textMid(LCD_CX, 318, fw, ink, 1);
+  textMid(LCD_CX, 324, fw, ink, 1);
 }
 
 static void settingsTap(int16_t x, int16_t y) {
   Settings &st = storeSettings();
   for (int i = 0; i < SET_N; i++) {
-    if (y < SET_ROWS[i].y - 8 || y > SET_ROWS[i].y + 16) continue;
+    if (y < SET_ROWS[i].y - 8 || y > SET_ROWS[i].y + 14) continue;
     int dir = (x >= 280) ? +1 : (x >= 204 && x <= 236) ? -1 : 0;
     if (!dir) return;
     switch (i) {
@@ -384,6 +427,7 @@ static void settingsTap(int16_t x, int16_t y) {
       case 1: setMin = (setMin + dir + 60) % 60; break;
       case 2: st.sound = !st.sound; buzzSetEnabled(st.sound); break;
       case 3: st.reveal = !st.reveal; break;
+      case 4: st.breathe = !st.breathe; break;
       default:
         st.bright = (uint8_t)constrain((int)st.bright + dir * 15, 20, 255);
         boardBrightness(st.bright);
@@ -493,6 +537,11 @@ static void handleTouch(uint32_t now) {
 
   int16_t x, y;
   bool down = touch.getPoint(&x, &y, 1) > 0;
+#if IMAGE_FIELDS
+  // Cualquier contacto detiene la respiracion y reinicia la espera: mientras
+  // haya una mano encima, el campo se queda donde el pulgar lo dejo.
+  if (down) lastInteract = now;
+#endif
 
   if (down && !touchDown) {
     gx0 = gxl = x;

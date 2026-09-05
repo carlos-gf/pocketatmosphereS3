@@ -39,6 +39,7 @@ void storeBegin() {
   gSet.sound = prefs.getBool("snd", true);
   gSet.haptics = prefs.getBool("hap", true);
   gSet.reveal = prefs.getBool("rev", false);
+  gSet.breathe = prefs.getBool("brt", true);
   gSet.bright = prefs.getUChar("bri", 170);
   gSet.lastAtmos = prefs.getUChar("la", 0);
   gSet.lastDepth = prefs.getUChar("ld", 140);
@@ -126,6 +127,7 @@ void storeSaveSettings() {
   prefs.putBool("snd", gSet.sound);
   prefs.putBool("hap", gSet.haptics);
   prefs.putBool("rev", gSet.reveal);
+  prefs.putBool("brt", gSet.breathe);
   prefs.putUChar("bri", gSet.bright);
   prefs.putUChar("la", gSet.lastAtmos);
   prefs.putUChar("ld", gSet.lastDepth);

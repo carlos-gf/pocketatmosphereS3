@@ -43,6 +43,7 @@ struct Settings {
   bool sound = true;
   bool haptics = true;   // el motor se apaga aparte del sonido: son dos canales
   bool reveal = false;   // si revela el lugar de origen tras nombrar
+  bool breathe = true;   // el campo respira cuando lo dejas quieto
   uint8_t bright = 170;
   uint8_t lastAtmos = 0;
   uint8_t lastDepth = 140;

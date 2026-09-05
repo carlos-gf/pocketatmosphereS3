@@ -188,3 +188,72 @@ Speaker and microphone are on **separate I²S buses** here, so unlike the CoreS3
 they can both run at once. Recording atmospheres stops being mutually exclusive
 with making sound. The voice is synthesised directly to the PCM5101 in
 `src146/buzz.cpp` — a sine with a real amplitude envelope, no library.
+
+
+---
+
+## v0.4 — the thesis reduction ladder, and the breath
+
+The 1.46 build no longer reduces photographs with the local cell permutation.
+It runs **the Chapter 5 stimulus generator itself** (`sketch_rpc_depth3_texture.pde`),
+constant for constant, in `src146/rpc.cpp`:
+
+    destination key   blurred luminance, sigma(d) = 3.5 + 31.5*d^1.3 (at 900 px, scaled with W)
+    source key        luminance band + hue within the band, Q(d) = 2^(6 - 5d)
+    then              inside each band's destination slice, positions are reordered
+                      by a blurred, chroma-weighted, vector-averaged hue field
+    TEXTURE           band = floor((L + TEXTURE*(noise - 0.5)) * Q)
+
+The output is an exact permutation of the source in every frame — verified on the
+compiled firmware code, not just asserted: `np.sort(out) == np.sort(src)` at
+d = 0.30 / 0.50 / 0.75.
+
+Two deliberate departures from the sketch, both measured:
+
+**TEXTURE is 0.10, not 0.25.** The stimuli are generated at 900 px and *seen*
+downscaled, and TEXTURE is per-pixel white noise, so viewing averages it away.
+Fine-scale tonal energy (std of luminance minus its 3x3 mean) against a
+900 -> 412 reference of 5.9 / 6.4 / 8.3: TEXTURE 0.25 gives 14.3 / 15.2 / 19.2,
+TEXTURE 0.10 gives 7.3 / 9.2 / 15.7. At d = 0.8 nothing matches, because with
+Q = 4 the sort itself makes fine structure. That gap is the panel size, not the knob.
+
+**It renders at 206x206 and doubles by nearest neighbour.** Half resolution is
+indistinguishable (sigma is already >= 7 px) and costs a quarter as much. The
+crude doubling turns out to be the *correct* one: 206 + nearest measures 5.99
+against the reference's 5.89, while 206 + bilinear collapses to 1.92 — smooth
+interpolation eats exactly the grain the reference has.
+
+### The breath
+
+Put the device down and leave it for a second and a half, and the field starts
+breathing: reduction depth oscillates +-0.22 around wherever your thumb left it.
+Touch it and it stops. `SETTINGS -> breathing` turns it off.
+
+It cannot be made smooth, and it is worth knowing why before trying. Q is an
+integer and so are the blur's box widths. Measured at 206 px: changing sigma by
+less than 5% changes nothing at all, and moving Q by 1 — or by 0.125, using a
+fractional Q — reshuffles the whole image (mean |diff| 16.9 for 5.000 -> 5.125,
+20.4 for 5 -> 6). The operation is not continuous in depth.
+
+But it is a *dense* change, not a sparkle: at that step 67% of pixels move a
+little and only 1.7% move a lot — the same distribution as a rigid 1.5 px shift.
+So instead of faking smoothness, the animation gives **one frame per quantum**:
+the distinct (Q, box widths) states along the range are enumerated and each is a
+frame. No dead frames, no double jumps — step-to-step deviation 2.0 against 6.1
+for spacing the frames evenly in depth.
+
+That is about 27 states over a +-0.22 range, computed once and cached
+(27 x 206 x 206 x 2 = 2.3 MB of PSRAM), then ping-ponged: a 52-frame cycle at
+330 ms, about 17 seconds. Playback is a blit, so the tempo is free.
+
+The cycle is built **one state per frame, from the middle outwards**, and the
+middle state is held until the cycle is complete. So putting the device down
+shows essentially the image that was already under your thumb, the breath starts
+from there a few seconds later, and the device never stalls waiting to compute.
+If PSRAM runs out mid-build it breathes over the contiguous stretch it managed,
+which by construction is centred on your depth.
+
+    src146/rpc.h     the reasoning and the constants
+    src146/rpc.cpp   the operation, the cache and the schedule
+
+Build: 2,567,846 bytes, 81% of the huge_app partition.
