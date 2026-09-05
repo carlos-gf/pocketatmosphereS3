@@ -25,9 +25,26 @@ Usage:  python3 tools/import_images.py tools/src/*.png > images.h
 import sys, os
 from PIL import Image, ImageOps
 import numpy as np
+import rpc_reduce as R
 
 W, H = 412, 412   # panel redondo Waveshare 1.46
 PAL = 16
+
+# --- miniaturas para la pantalla de las seis ---------------------------------
+# La rejilla de la coleccion pintaba los seis campos REDUCIENDOLOS EN VIVO, seis
+# veces por fotograma. Eso no es lento, es imposible: la pantalla se quedaba
+# clavada. Y ademas no hace falta que sean el fotograma exacto -es una hoja de
+# contactos, no el campo-, asi que se hornean aqui.
+#
+# Se hornea la REDUCCION, no la fotografia. Una miniatura sin reducir mentiria
+# sobre lo que hay detras: enseñaria la foto que el aparato justamente no enseña.
+#
+# Tres peldanos, y en el aparato se elige el mas cercano a la profundidad que
+# cada campo recuerda, para que la hoja de contactos diga tambien donde dejo
+# cada campo quien lo miro.
+TH_W, TH_H = 88, 68
+TH_DEPTHS = [0.25, 0.50, 0.75]
+TH_TEXTURE = 0.10
 
 
 def prepare(path):
@@ -54,6 +71,36 @@ def palette_of(im):
     return cols
 
 
+def thumb_crop(path, w, h):
+    """Recorte al aspecto de la celda, y a su tamano exacto: la reduccion se
+    calcula al tamano en que se va a ver, no reescalada despues."""
+    im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    s = min(im.size)
+    im = im.crop(((im.width - s) // 2, (im.height - s) // 2,
+                  (im.width + s) // 2, (im.height + s) // 2))
+    tw = w / h
+    nh = im.height
+    nw = int(nh * tw)
+    if nw > im.width:
+        nw = im.width
+        nh = int(nw / tw)
+    im = im.crop(((im.width - nw) // 2, (im.height - nh) // 2,
+                  (im.width + nw) // 2, (im.height + nh) // 2))
+    return np.asarray(im.resize((w, h), Image.LANCZOS), dtype=np.uint8)
+
+
+def thumbs_of(path):
+    """Un peldano por profundidad, con la MISMA operacion que corre en la placa."""
+    src = thumb_crop(path, TH_W, TH_H)
+    out = []
+    for d in TH_DEPTHS:
+        red = R.reduce(src, d, texture=TH_TEXTURE)
+        a = red.astype(np.uint16)
+        r, g, b = a[..., 0], a[..., 1], a[..., 2]
+        out.append((((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)).reshape(-1))
+    return np.concatenate(out)
+
+
 def rgb565_of(im):
     a = np.asarray(im, dtype=np.uint16)
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
@@ -72,11 +119,19 @@ def emit(paths):
     out.append("#define IMG_H %d" % H)
     out.append("#define IMG_COUNT %d" % len(paths))
     out.append("")
+    out.append("// Miniaturas de la hoja de contactos: la REDUCCION horneada, no la foto.")
+    out.append("#define IMG_TH_W %d" % TH_W)
+    out.append("#define IMG_TH_H %d" % TH_H)
+    out.append("#define IMG_TH_LEVELS %d" % len(TH_DEPTHS))
+    out.append("static const float IMG_TH_DEPTH[IMG_TH_LEVELS] = { %s };"
+               % ", ".join("%.2ff" % d for d in TH_DEPTHS))
+    out.append("")
     out.append("// Las fotografias se DEFINEN una sola vez, en la unidad de compilacion")
     out.append("// que define IMAGES_DEFINE (field.cpp). En las demas solo se declaran.")
     out.append("// Con `static const` cada .cpp que incluia esto se llevaba su propia")
     out.append("// copia: 2 MB de fotos ocupaban 4 MB de flash y el binario no cabia.")
-    out.append("struct ImgField { const uint32_t *pal; const uint16_t *rgb; const char *source; };")
+    out.append("struct ImgField { const uint32_t *pal; const uint16_t *rgb;")
+    out.append("                  const uint16_t *thumb; const char *source; };")
     out.append("#ifdef IMAGES_DEFINE")
     out.append("#define IMG_DEF")
     out.append("#else")
@@ -88,6 +143,7 @@ def emit(paths):
         im = prepare(path)
         cols = palette_of(im)
         rgb = rgb565_of(im)
+        th = thumbs_of(path)
 
         out.append("// --- %s ---" % name)
         out.append("#ifdef IMAGES_DEFINE")
@@ -99,16 +155,22 @@ def emit(paths):
         for i in range(0, rgb.size, 24):
             out.append("  " + ",".join("0x%04x" % v for v in rgb[i : i + 24]) + ",")
         out.append("};")
+        out.append("const uint16_t IMG_TH_%s[IMG_TH_LEVELS * IMG_TH_W * IMG_TH_H] = {" % name.upper())
+        for i in range(0, th.size, 24):
+            out.append("  " + ",".join("0x%04x" % v for v in th[i : i + 24]) + ",")
+        out.append("};")
         out.append("#else")
         out.append("extern const uint32_t IMG_PAL_%s[16];" % name.upper())
         out.append("extern const uint16_t IMG_RGB_%s[IMG_W * IMG_H];" % name.upper())
+        out.append("extern const uint16_t IMG_TH_%s[IMG_TH_LEVELS * IMG_TH_W * IMG_TH_H];" % name.upper())
         out.append("#endif")
         out.append("")
 
     out.append("#ifdef IMAGES_DEFINE")
     out.append("extern const ImgField IMAGES[IMG_COUNT] = {")   # extern: en C++ un const global es interno por defecto
     for name in names:
-        out.append('  { IMG_PAL_%s, IMG_RGB_%s, "%s" },' % (name.upper(), name.upper(), name))
+        out.append('  { IMG_PAL_%s, IMG_RGB_%s, IMG_TH_%s, "%s" },'
+                   % (name.upper(), name.upper(), name.upper(), name))
     out.append("};")
     out.append("#else")
     out.append("extern const ImgField IMAGES[IMG_COUNT];")

@@ -285,4 +285,28 @@ board answers it: **`TIME` over USB** reports measured milliseconds per stage
 (blur / keys / sort / scatter) at both levels, plus free PSRAM. "It feels slow"
 is not a diagnosis.
 
-Build: 2,571,454 bytes, 81% of the huge_app partition.
+### The six-fields screen
+
+It hung. `renderIndex` was calling the live field renderer **six times per
+frame** — six whole reductions, 24 times a second — so the screen locked up and
+took the touch poll with it, which is why it was hard to get back out.
+
+A contact sheet does not need to be the exact frame; it needs to appear. So the
+six thumbnails are **baked into flash by the importer**, 88x68, and drawing one
+is a memcpy.
+
+They are baked as the **reduction**, not the photograph. A thumbnail showing the
+real picture would give away precisely what the device refuses to show — the
+whole point is that nothing on the device names or reveals the source.
+
+Three rungs per field (d = 0.25 / 0.50 / 0.75) and the grid picks the one
+nearest that field's remembered depth, so the contact sheet also says where each
+person left each field. Cost: 6 x 3 x 88 x 68 x 2 = 210 kB of flash.
+
+    python3 tools/import_images.py tools/src/*.png > src146/images.h
+
+`tools/rpc_reduce.py` is the reduction operation in numpy — the same constants
+as `src146/rpc.cpp` — so the baked thumbnails and the live field come from one
+definition.
+
+Build: 2,782,230 bytes, 88% of the huge_app partition.

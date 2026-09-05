@@ -38,7 +38,7 @@
 #include "rpc.h"
 #endif
 
-#define FW_VERSION "0.4-146"
+#define FW_VERSION "0.4c-146"
 
 // QSPI -> SPD2010. El reset del panel cuelga del expansor, asi que aqui va
 // GFX_NOT_DEFINED y se hace a mano antes de begin().
@@ -371,11 +371,35 @@ static void renderIndex() {
   for (int i = 0; i < ATMOS_COUNT; i++) {
     int c = i % IDX_COLS, r = i / IDX_COLS;
     int x = IDX_X + c * (IDX_W + IDX_GAPX), y = IDX_Y + r * (IDX_H + IDX_GAPY);
+#if IMAGE_FIELDS
+    // Miniatura HORNEADA. Antes esto reducia los seis campos en vivo, seis
+    // reducciones enteras por fotograma, y la pantalla se quedaba clavada.
+    // Una hoja de contactos no necesita ser el fotograma exacto; necesita
+    // aparecer. Lo que si necesita es estar REDUCIDA: una miniatura con la
+    // fotografia enseñaria justo lo que el aparato se niega a enseñar.
+    // De los peldanos horneados se coge el mas cercano a la profundidad que
+    // ese campo recuerda, asi que la rejilla dice tambien donde lo dejo cada
+    // cual.
+    int lvl = 0;
+    float best = 9.0f;
+    for (int k = 0; k < IMG_TH_LEVELS; k++) {
+      float e = fabsf(depthByAtmos[i] - IMG_TH_DEPTH[k]);
+      if (e < best) { best = e; lvl = k; }
+    }
+    const uint16_t *th = ATMOS[i].thumb + (size_t)lvl * IMG_TH_W * IMG_TH_H;
+    uint16_t *fb = gfx->getFramebuffer();
+    for (int ty = 0; ty < IDX_H; ty++) {
+      const uint16_t *sr = th + (size_t)ty * IMG_TH_W;
+      uint16_t *dr = fb + (size_t)(y + ty) * LCD_WIDTH + x;
+      for (int tx = 0; tx < IDX_W; tx++) dr[tx] = FIELD_OUT(sr[tx]);
+    }
+#else
     FieldState s = fs;
     s.atmos = i;
     s.depth = depthByAtmos[i];
     s.t = fs.t * 0.6f + i * 7.3f;
     fieldSwatch(gfx->getFramebuffer(), LCD_WIDTH, LCD_HEIGHT, x, y, IDX_W, IDX_H, s);
+#endif
     if (i == fs.atmos) gfx->drawRect(x - 2, y - 2, IDX_W + 4, IDX_H + 4, ink);
     char lab[16];
     snprintf(lab, sizeof lab, "%s  %u", ATMOS_NUMERAL[i], (unsigned)storeNameCount(i));

@@ -33,9 +33,15 @@
 
 struct Atmos {
   const uint32_t *pal24;
-  const uint16_t *rgb;     // la fotografia entera, 320x240 RGB565, sin resumir
+  const uint16_t *rgb;     // la fotografia entera, 412x412 RGB565, sin resumir
                            // (el multiconjunto que se permuta; la luminancia se
                            //  deriva al cargar, no se guarda)
+#if IMAGE_FIELDS
+  const uint16_t *thumb;   // IMG_TH_LEVELS reducciones horneadas de 88x68, para
+                           // la hoja de contactos. Reducidas, no la foto: una
+                           // miniatura sin reducir enseñaria justo lo que el
+                           // aparato se niega a enseñar.
+#endif
   uint16_t driftMs;        // periodo base de deriva (mayor = mas lento)
   uint8_t grain;           // 0..255 cuanto grano de alta frecuencia admite
   uint8_t warmth;          // 0..255 sesgo de temperatura al aplicar la hora
@@ -94,12 +100,12 @@ static const Atmos ATMOS[ATMOS_COUNT] = {
 // arriba, que sigue siendo autoria y no medida.
 // ATMOS solo guarda punteros: duplicarlo por unidad de compilacion no cuesta.
 static const Atmos ATMOS[IMG_COUNT] = {
-  { IMAGES[0].pal, IMAGES[0].rgb, 5200, 110,  90, 196, 7, 5, 190, IMAGES[0].source },
-  { IMAGES[1].pal, IMAGES[1].rgb, 3400, 140,  70, 147, 9, 7,  96, IMAGES[1].source },
-  { IMAGES[2].pal, IMAGES[2].rgb, 9000,  40, 120, 392, 3, 2, 205, IMAGES[2].source },
-  { IMAGES[3].pal, IMAGES[3].rgb, 6800, 190,  60, 262, 5, 8, 168, IMAGES[3].source },
-  { IMAGES[4].pal, IMAGES[4].rgb, 4200,  90, 210, 330, 4, 4, 108, IMAGES[4].source },
-  { IMAGES[5].pal, IMAGES[5].rgb, 7600,  70, 230, 220, 6, 3, 210, IMAGES[5].source },
+  { IMAGES[0].pal, IMAGES[0].rgb, IMAGES[0].thumb, 5200, 110,  90, 196, 7, 5, 190, IMAGES[0].source },
+  { IMAGES[1].pal, IMAGES[1].rgb, IMAGES[1].thumb, 3400, 140,  70, 147, 9, 7,  96, IMAGES[1].source },
+  { IMAGES[2].pal, IMAGES[2].rgb, IMAGES[2].thumb, 9000,  40, 120, 392, 3, 2, 205, IMAGES[2].source },
+  { IMAGES[3].pal, IMAGES[3].rgb, IMAGES[3].thumb, 6800, 190,  60, 262, 5, 8, 168, IMAGES[3].source },
+  { IMAGES[4].pal, IMAGES[4].rgb, IMAGES[4].thumb, 4200,  90, 210, 330, 4, 4, 108, IMAGES[4].source },
+  { IMAGES[5].pal, IMAGES[5].rgb, IMAGES[5].thumb, 7600,  70, 230, 220, 6, 3, 210, IMAGES[5].source },
 };
 #endif
 
