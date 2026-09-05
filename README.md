@@ -348,4 +348,57 @@ is a scrubbing aid that exists for half a second. Everything settled — what yo
 look at, name, and breathe — is still the exact permutation, verified at both
 levels after every change.
 
-Build: 2,782,494 bytes, 88% of the huge_app partition.
+### v0.6 — why it jumped, and what actually moves
+
+Report from the board: the animation was barely noticeable at the clear end of
+the ladder, and everywhere else it "jumped, like the colours move from place to
+place suddenly every random amount of seconds".
+
+Both had the same cause, and the first fix had been aimed at the wrong thing.
+
+**The colours were not moving — they were being reassigned.** Walking the depth
+ladder means changing Q, and Q is an integer that does not subdivide (measured
+earlier: Q 5.000 -> 5.125 moves as much as 5 -> 6). So every step reorganised the
+whole image at once. Adding drifting noise to the destination field is no better,
+and that is the thing worth understanding: because the destination sort is a
+*global rank* sort, two positions with adjacent ranks can sit in opposite
+corners, so **any** perturbation, however small, swaps distant pixels. Comparing
+each frame with the next, raw against 5x5-blurred — a rigid 1 px shift scores
+0.340, and below about 0.25 it is boil, not motion:
+
+| | coherence |
+|---|---|
+| adding noise to the field | 0.234 |
+| walking the depth ladder (v0.5) | 0.236 |
+| **warping the field (v0.6)** | **0.48 – 0.50** |
+| rigid 1 px translation, for scale | 0.340 |
+
+Nor was it a matter of smaller steps: with added noise, going from 16 frames to
+48 only moves the per-frame step from 7.5 to 5.9. There is a floor that does not
+subdivide, exactly as with fractional Q.
+
+**Warping is different in kind.** The field is *resampled at displaced
+coordinates* rather than perturbed, so the rank order is transported instead of
+shuffled, and the blobs travel. (This is what the old cell renderer in
+`field.cpp` did, which is why that first prototype moved organically.)
+
+So the breath no longer touches depth at all. It stays exactly where you left
+the dial, and what breathes is the warp amplitude, 0 -> A -> 0 around the cycle.
+**At amplitude zero the frame is bit-identical to the still you were looking
+at** — so releasing your finger starts the animation literally from that image,
+not from something near it. Amplitude scales with sigma (`3.2*sigma`, floor 7),
+because a more reduced field is smoother and needs a larger displacement to move
+the same structure: with a fixed amplitude the coherence fell from 0.324 to
+0.223 across the ladder; scaled, it holds between 0.27 and 0.32.
+
+**And the timing was a real bug.** The frame index came from
+`now_ms / ms_per_frame` — wall clock — while an actual repaint takes far longer
+than one nominal frame. So the index jumped two or three states at a time, at
+irregular intervals. That is precisely "every random amount of seconds". It now
+advances at most one frame per *painted* frame.
+
+28 frames, 2.4 MB of PSRAM, ~7 s a cycle, and the cycle closes on itself
+(amplitude returns to zero and the noise pans a whole tile), so no ping-pong.
+Every frame verified an exact permutation of the source.
+
+Build: 2,783,742 bytes, 88% of the huge_app partition.

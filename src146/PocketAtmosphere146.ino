@@ -38,7 +38,7 @@
 #include "rpc.h"
 #endif
 
-#define FW_VERSION "0.5-146"
+#define FW_VERSION "0.6-146"
 
 // QSPI -> SPD2010. El reset del panel cuelga del expansor, asi que aqui va
 // GFX_NOT_DEFINED y se hace a mano antes de begin().
@@ -187,19 +187,16 @@ static void drawBattery(int x, int y, uint16_t col) {
 // La unica reduccion fina que queda es la del instante en que se suelta el
 // dedo: una sola, y despues el aparato ya no calcula nada hasta que lo toques.
 // ---------------------------------------------------------------------------
-// La respiracion va ANCLADA a la profundidad elegida, y esa profundidad es el
-// extremo CLARO del recorrido: el campo respira desde donde lo dejaste HACIA MAS
-// REDUCCION, y vuelve. El fotograma que elegiste esta siempre en el ciclo, y es
-// el mas legible de todos.
+// La respiracion NO recorre la escalera de profundidad. Se queda exactamente en
+// la profundidad que elegiste y lo que respira es la DEFORMACION del campo.
 //
-// Antes la ventana era +-0.22 CENTRADA y se desplazaba al topar con los
-// extremos, con dos consecuencias feas: dejarlo en 0.10 y dejarlo en 0.20 daban
-// exactamente la MISMA respiracion (0.05..0.49 las dos), y el centro real caia
-// en 0.27, que no es donde nadie lo habia dejado. Anclarla arregla las dos cosas
-// y ademas baja la cache de 4,4 MB a entre 0,5 y 2,2 MB.
-#define BREATH_SPAN 0.20f     // hacia dentro, nunca hacia fuera
-#define BREATH_MIN  0.06f     // recorrido minimo cerca del fondo de la escalera
-#define BREATH_MS   330       // por fotograma
+// Recorrer la escalera daba saltos porque Q es entero y no se subdivide: cada
+// paso reorganizaba la imagen entera de golpe, y ademas el repintado real es
+// mas lento que el fotograma nominal, asi que los saltos salian a intervalos
+// irregulares. Ahora la amplitud de la deformacion es continua, el fotograma de
+// amplitud cero es literalmente el que estabas mirando, y se avanza como mucho
+// un fotograma por repintado.
+#define BREATH_MS   260       // por fotograma pintado; el ciclo dura unos 7 s
 #define BREATH_WAIT 1500      // hay que soltarlo este rato para que arranque
 #define DRAG_SETTLE 200       // parado esto, se pasa al nivel fino aunque sigas tocando
 static uint32_t lastInteract = 0, lastDepthMove = 0;
@@ -222,10 +219,7 @@ static void renderFieldPixels(uint32_t now) {
   bool idle = storeSettings().breathe && (now - lastInteract > BREATH_WAIT);
   if (!idle) { rpcStill(fb, fs.atmos, fs.depth); return; }
 
-  float lo = fs.depth, hi = fs.depth + BREATH_SPAN;
-  if (hi > 0.98f) hi = 0.98f;
-  if (hi - lo < BREATH_MIN) { lo = hi - BREATH_MIN; if (lo < 0.05f) lo = 0.05f; }
-  rpcBreathSet(fs.atmos, lo, hi);
+  rpcBreathSet(fs.atmos, fs.depth);
   rpcBreathBuild();                      // como mucho un estado por fotograma
   if (!rpcBreathFrame(fb, now, BREATH_MS)) rpcStill(fb, fs.atmos, fs.depth);
 }

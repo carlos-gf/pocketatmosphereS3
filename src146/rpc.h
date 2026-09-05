@@ -74,7 +74,7 @@
 #define RPC_CW 103
 #define RPC_CH 103
 #define RPC_TEXTURE 0.10f
-#define RPC_STATES_MAX 48
+#define RPC_CYCLE 28        // fotogramas del ciclo de deformacion (28 x 85 kB = 2,4 MB)
 #define RPC_COARSE_SLOTS 40   // el recorrido entero tiene 63 estados a 103 px
 #define RPC_NOISE_SEED 12345
 
@@ -98,8 +98,8 @@ bool rpcStill(uint16_t *out412, int atmos, float depth);
 bool rpcDrag(uint16_t *out412, int atmos, float depth);
 
 // --- respiracion -------------------------------------------------------------
-// Fija el recorrido y el ambiente. Si cambia algo, tira la cache.
-void rpcBreathSet(int atmos, float lo, float hi);
+// Fija el ambiente y la profundidad ANCLADA. Si cambia alguna, tira la cache.
+void rpcBreathSet(int atmos, float depth);
 // Construye COMO MUCHO un estado y vuelve. Llamar desde loop(). Devuelve true
 // mientras quede trabajo.
 bool rpcBreathBuild();

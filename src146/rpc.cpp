@@ -128,6 +128,7 @@ static Level LC = { RPC_CW, RPC_CH, RPC_CW * RPC_CH };
 static int16_t  *bufA = nullptr, *bufB = nullptr, *fcos = nullptr;
 static uint16_t *keyD = nullptr, *keyH = nullptr, *keyS = nullptr;
 static uint16_t *ordS = nullptr, *ordD = nullptr, *ordT = nullptr, *ordX = nullptr;
+static uint16_t *warpT = nullptr;   // destino temporal de la deformacion
 
 static bool ensureWork() {
   const size_t N = (size_t)RPC_W * RPC_H;
@@ -141,6 +142,7 @@ static bool ensureWork() {
   if (!ordD) ordD = (uint16_t *)RPC_ALLOC(N * 2);
   if (!ordT) ordT = (uint16_t *)RPC_ALLOC(N * 2);
   if (!ordX) ordX = (uint16_t *)RPC_ALLOC(N * 2);
+  if (!warpT) warpT = (uint16_t *)RPC_ALLOC(N * 2);
   return bufA && bufB && fcos && keyD && keyH && keyS && ordS && ordD && ordT && ordX;
 }
 
@@ -295,6 +297,121 @@ static void radix16(const uint16_t *in, uint16_t *out, uint16_t *tmp,
 }
 
 // ---------------------------------------------------------------------------
+// DEFORMAR EL CAMPO, NO SUMARLE RUIDO
+//
+// Este es EL punto de la animacion, y el primer intento lo tenia al reves.
+//
+// Sumar ruido a la clave de destino (campo += A*ruido) cambia el ORDEN GLOBAL de
+// rangos, y dos posiciones con rangos contiguos pueden estar en esquinas
+// opuestas de la pantalla. El resultado es que los colores no se mueven: se
+// apagan aqui y se encienden alli. Medido, comparando cada fotograma con el
+// siguiente en crudo y desenfocado a 5x5 -un desplazamiento rigido de 1 px da
+// 0.340, y por debajo de ~0.25 ya es hervor-:
+//
+//     sumar ruido al campo .............. 0.234
+//     escalera de profundidad ........... 0.236
+//     DEFORMAR el campo ................. 0.356   <- como una traslacion
+//
+// Y no es cuestion de dar pasos mas pequenos: con ruido sumado, pasar de 16 a 48
+// fotogramas solo baja el paso de 7.5 a 5.9. Hay un suelo de hervor que no se
+// subdivide, igual que Q no se subdividia con valores fraccionarios.
+//
+// Deformar es distinto en especie: el campo se MUESTREA en coordenadas
+// desplazadas, asi que el orden de rangos se TRANSPORTA en vez de barajarse. Las
+// manchas se desplazan. (Es, por cierto, lo que hacia el renderizador viejo por
+// celdas de field.cpp, y por eso aquel primer prototipo se movia de forma
+// organica.)
+//
+// La amplitud escala con sigma: a mas reduccion el campo es mas liso y hace
+// falta desplazar mas para mover la misma estructura. Con amplitud fija el ratio
+// caia de 0.324 a 0.223 a lo largo de la escalera; con 3.2*sigma se queda entre
+// 0.267 y 0.293 de punta a punta.
+// ---------------------------------------------------------------------------
+#define NTEX 64
+static float *ntexX = nullptr, *ntexY = nullptr;
+
+static void buildNoise() {
+  if (ntexX) return;
+  ntexX = (float *)RPC_ALLOC(NTEX * NTEX * 4);
+  ntexY = (float *)RPC_ALLOC(NTEX * NTEX * 4);
+  if (!ntexX || !ntexY) return;
+  float *t[2] = { ntexX, ntexY };
+  for (int s = 0; s < 2; s++) {
+    for (int i = 0; i < NTEX * NTEX; i++)
+      t[s][i] = hashNoise((uint32_t)(i + s * 7919)) - 0.5f;
+    // Suavizado CON ENVOLTURA: la textura tiene que casar consigo misma o el
+    // ciclo daria un salto al cerrarse.
+    for (int pass = 0; pass < 6; pass++) {
+      for (int y = 0; y < NTEX; y++) {
+        for (int x = 0; x < NTEX; x++) {
+          float a = 0;
+          for (int k = -2; k <= 2; k++) a += t[s][y * NTEX + ((x + k + NTEX) & (NTEX - 1))];
+          bufA[y * NTEX + x] = (int16_t)(a * (32767.0f / 5.0f));
+        }
+      }
+      for (int y = 0; y < NTEX; y++)
+        for (int x = 0; x < NTEX; x++) {
+          float a = 0;
+          for (int k = -2; k <= 2; k++) a += bufA[((y + k + NTEX) & (NTEX - 1)) * NTEX + x];
+          t[s][y * NTEX + x] = a * (1.0f / (5.0f * 32767.0f));
+        }
+    }
+    float mn = 1e9f, mx = -1e9f;
+    for (int i = 0; i < NTEX * NTEX; i++) { if (t[s][i] < mn) mn = t[s][i]; if (t[s][i] > mx) mx = t[s][i]; }
+    float k = (mx > mn) ? 1.0f / (mx - mn) : 1.0f;
+    for (int i = 0; i < NTEX * NTEX; i++) t[s][i] = (t[s][i] - mn) * k - 0.5f;
+  }
+}
+
+static inline float sampleTiled(const float *t, float u, float v) {
+  int u0 = (int)floorf(u), v0 = (int)floorf(v);
+  float fu = u - u0, fv = v - v0;
+  int a = u0 & (NTEX - 1), b = (u0 + 1) & (NTEX - 1);
+  int p = v0 & (NTEX - 1), q = (v0 + 1) & (NTEX - 1);
+  float t0 = t[p * NTEX + a] * (1 - fu) + t[p * NTEX + b] * fu;
+  float t1 = t[q * NTEX + a] * (1 - fu) + t[q * NTEX + b] * fu;
+  return t0 * (1 - fv) + t1 * fv;
+}
+
+// Desplazamiento en una rejilla gruesa (el campo de deformacion es de baja
+// frecuencia por construccion, asi que calcularlo por pixel seria tirar tiempo).
+#define WG 9
+static float wdx[(206 / WG + 2) * (206 / WG + 2)], wdy[sizeof(wdx) / sizeof(float)];
+static int wgw = 0, wgh = 0;
+
+static void warpKey(uint16_t *key, uint16_t *tmp, int w, int h, float amp, float ph) {
+  if (amp <= 0.01f || !ntexX) return;
+  const float sc = (float)w / 2.5f;
+  wgw = w / WG + 2; wgh = h / WG + 2;
+  for (int gy = 0; gy < wgh; gy++)
+    for (int gx = 0; gx < wgw; gx++) {
+      float x = (float)(gx * WG), y = (float)(gy * WG);
+      wdx[gy * wgw + gx] = amp * sampleTiled(ntexX, x / sc + ph * NTEX, y / sc + ph * NTEX * 0.37f);
+      wdy[gy * wgw + gx] = amp * sampleTiled(ntexY, x / sc - ph * NTEX * 0.6f, y / sc + ph * NTEX);
+    }
+  for (int y = 0; y < h; y++) {
+    int gy = y / WG; float fy = (float)(y - gy * WG) / WG;
+    for (int x = 0; x < w; x++) {
+      int gx = x / WG; float fx = (float)(x - gx * WG) / WG;
+      const float *dx0 = wdx + gy * wgw + gx, *dx1 = dx0 + wgw;
+      const float *dy0 = wdy + gy * wgw + gx, *dy1 = dy0 + wgw;
+      float dx = (dx0[0] * (1 - fx) + dx0[1] * fx) * (1 - fy) + (dx1[0] * (1 - fx) + dx1[1] * fx) * fy;
+      float dy = (dy0[0] * (1 - fx) + dy0[1] * fx) * (1 - fy) + (dy1[0] * (1 - fx) + dy1[1] * fx) * fy;
+      float sx = x + dx, sy = y + dy;
+      if (sx < 0) sx = 0; else if (sx > w - 1.001f) sx = w - 1.001f;
+      if (sy < 0) sy = 0; else if (sy > h - 1.001f) sy = h - 1.001f;
+      int ix = (int)sx, iy = (int)sy;
+      float ax = sx - ix, ay = sy - iy;
+      const uint16_t *r0 = key + (size_t)iy * w, *r1 = r0 + w;
+      float v = (r0[ix] * (1 - ax) + r0[ix + 1] * ax) * (1 - ay) +
+                (r1[ix] * (1 - ax) + r1[ix + 1] * ax) * ay;
+      tmp[(size_t)y * w + x] = (uint16_t)(v + 0.5f);
+    }
+  }
+  memcpy(key, tmp, (size_t)w * h * 2);
+}
+
+// ---------------------------------------------------------------------------
 // Cronometraje. "Va lento" no es un diagnostico; el comando TIME por USB da los
 // milisegundos de cada etapa medidos EN LA PLACA, que es el unico sitio donde
 // el numero significa algo.
@@ -305,7 +422,8 @@ const RpcTiming &rpcTiming() { return gT; }
 // ---------------------------------------------------------------------------
 // UNA reduccion, en el nivel dado, con Q y sigma explicitos.
 // ---------------------------------------------------------------------------
-static bool reduceQS(Level &L, int atmos, int Q, float sigma, uint16_t *dst) {
+static bool reduceQS(Level &L, int atmos, int Q, float sigma, uint16_t *dst,
+                     float warpAmp = 0.0f, float warpPh = 0.0f) {
   if (!prepare(L, atmos) || !ensureWork()) return false;
   const int32_t n = L.n;
   const int w = L.w, h = L.h;
@@ -331,8 +449,17 @@ static bool reduceQS(Level &L, int atmos, int Q, float sigma, uint16_t *dst) {
 
   for (int32_t i = 0; i < n; i++) {
     float t = atan2turns((float)bufA[i], (float)fcos[i]);
-    int v = (int)(t * 65535.0f + 0.5f);
-    keyH[i] = (uint16_t)(v < 0 ? 0 : (v > 65535 ? 65535 : v));
+    int v = (int)(t * 32767.0f + 0.5f);
+    keyH[i] = (uint16_t)(v < 0 ? 0 : (v > 32767 ? 32767 : v));
+  }
+
+  // Se deforman las DOS claves de destino con el mismo desplazamiento: si solo
+  // se moviera una, el tono se despegaria de la luminancia y las manchas se
+  // partirian por la mitad.
+  if (warpAmp > 0.01f) {
+    buildNoise();
+    warpKey(keyD, warpT, w, h, warpAmp, warpPh);
+    warpKey(keyH, warpT, w, h, warpAmp, warpPh);
   }
 
   // --- clave de origen: banda de luminancia + tono dentro de la banda --------
@@ -526,118 +653,83 @@ void rpcForget() {
 }
 
 // ---------------------------------------------------------------------------
-// Respiracion
+// LA RESPIRACION
+//
+// Profundidad FIJA -la que elegiste- y la amplitud de la deformacion respirando
+// 0 -> A -> 0 a lo largo del ciclo. En amplitud cero el fotograma es EXACTAMENTE
+// el que estabas mirando, asi que al soltar el dedo la animacion arranca de ahi
+// literalmente, no de un sitio parecido.
+//
+// La version anterior recorria la ESCALERA DE PROFUNDIDAD, y por eso daba
+// saltos: Q es entero, no se subdivide (medido: Q 5.000 -> 5.125 mueve tanto
+// como 5 -> 6), asi que cada paso reorganizaba la imagen entera de golpe. La
+// amplitud si es continua.
+//
+// El ciclo cierra solo: la amplitud vuelve a cero y el ruido recorre una textura
+// entera, asi que no hace falta ida y vuelta.
 // ---------------------------------------------------------------------------
-struct State { int q; float sigma; };
-
-static State  states[RPC_STATES_MAX];
-static uint16_t *frames[RPC_STATES_MAX];
-static uint8_t buildOrder[RPC_STATES_MAX];
-static bool   haveFrame[RPC_STATES_MAX];
-static int  nStates = 0, nBuilt = 0, midState = 0;
-static int  playLo = 0, playHi = 0;
-static int  breathAtmos = -1;
-static float breathLo = 0.30f, breathHi = 0.75f;
+static uint16_t *cyc[RPC_CYCLE];
+static bool  cycHave[RPC_CYCLE];
+static int   cycAtmos = -1, cycBuilt = 0, cycPos = 0;
+static float cycDepth = -1.0f, cycAmp = 0.0f, cycSigma = 0.0f;
+static int   cycQ = 0;
+static uint32_t cycLast = 0;
 
 void rpcBreathFree() {
-  for (int i = 0; i < RPC_STATES_MAX; i++) {
-    if (frames[i]) { RPC_FREE(frames[i]); frames[i] = nullptr; }
-    haveFrame[i] = false;
+  for (int i = 0; i < RPC_CYCLE; i++) {
+    if (cyc[i]) { RPC_FREE(cyc[i]); cyc[i] = nullptr; }
+    cycHave[i] = false;
   }
-  nStates = nBuilt = 0;
-  breathAtmos = -1;
+  cycBuilt = 0; cycPos = 0; cycAtmos = -1; cycDepth = -1.0f;
 }
 
-static void enumerateStates() {
-  nStates = 0;
-  int lastQ = -1, lastB[3] = { -1, -1, -1 };
-  const int SAMPLES = 1024;
-  for (int k = 0; k <= SAMPLES && nStates < RPC_STATES_MAX; k++) {
-    float d = breathLo + (breathHi - breathLo) * (float)k / (float)SAMPLES;
-    int q = rpcQForDepth(d);
-    float sg = rpcSigmaForDepth(d, RPC_W);
-    int b[3]; boxesForGauss(sg, b);
-    if (q != lastQ || b[0] != lastB[0] || b[1] != lastB[1] || b[2] != lastB[2]) {
-      states[nStates].q = q;
-      states[nStates].sigma = sg;
-      nStates++;
-      lastQ = q; lastB[0] = b[0]; lastB[1] = b[1]; lastB[2] = b[2];
-    }
-  }
-}
-
-void rpcBreathSet(int atmos, float lo, float hi) {
-  if (atmos == breathAtmos && lo == breathLo && hi == breathHi && nStates) return;
+void rpcBreathSet(int atmos, float depth) {
+  if (atmos == cycAtmos && depth == cycDepth) return;
   rpcBreathFree();
-  breathAtmos = atmos;
-  breathLo = lo; breathHi = hi;
-  enumerateStates();
-  nBuilt = 0;
-
-  // Se construye DESDE EL MEDIO HACIA FUERA, y hasta que el ciclo no esta
-  // entero se muestra ese estado central. Asi, al soltar el aparato, lo primero
-  // que aparece es practicamente la misma imagen que habia bajo el pulgar: la
-  // respiracion empieza desde donde lo dejaste. Ciclar con el recorrido a
-  // medias tampoco vale: la longitud cambia en cada fotograma y el vaiven sale
-  // a tirones.
-  midState = nStates / 2;
-  playLo = 0; playHi = nStates - 1;
-  int k = 0;
-  for (int offs = 0; offs < nStates && k < nStates; offs++) {
-    int a = midState - offs, b = midState + offs;
-    if (offs == 0) { buildOrder[k++] = (uint8_t)midState; continue; }
-    if (a >= 0 && k < nStates)      buildOrder[k++] = (uint8_t)a;
-    if (b < nStates && k < nStates) buildOrder[k++] = (uint8_t)b;
-  }
+  cycAtmos = atmos; cycDepth = depth;
+  cycQ = rpcQForDepth(depth);
+  cycSigma = rpcSigmaForDepth(depth, RPC_W);
+  // Amplitud proporcional a sigma, con suelo: a mas reduccion el campo es mas
+  // liso y hay que desplazar mas para mover lo mismo. Con amplitud fija la
+  // coherencia caia de 0.324 a 0.223 a lo largo de la escalera; asi se queda
+  // entre 0.27 y 0.32 de punta a punta.
+  cycAmp = 3.2f * cycSigma;
+  if (cycAmp < 7.0f) cycAmp = 7.0f;
+  cycBuilt = 0; cycPos = 0;
 }
 
-int rpcBreathReady() { return nBuilt; }
-int rpcBreathTotal() { return nStates; }
+int rpcBreathReady() { return cycBuilt; }
+int rpcBreathTotal() { return RPC_CYCLE; }
 
 bool rpcBreathBuild() {
-  if (breathAtmos < 0 || nBuilt >= nStates) return false;
-  int i = buildOrder[nBuilt];
-  if (!frames[i]) frames[i] = (uint16_t *)RPC_ALLOC((size_t)RPC_W * RPC_H * 2);
-  if (!frames[i]) {
-    // Sin memoria para el ciclo entero. No es un fallo: se respira sobre el
-    // tramo CONTIGUO que si esta, que por el orden de construccion rodea al
-    // central. No se renumera nada -frames[] va indexado por estado- sino que
-    // se acorta el recorrido.
-    playLo = playHi = midState;
-    while (playLo > 0 && haveFrame[playLo - 1]) playLo--;
-    while (playHi < nStates - 1 && haveFrame[playHi + 1]) playHi++;
-    nBuilt = nStates;
-    return false;
-  }
-  if (!reduceQS(LF, breathAtmos, states[i].q, states[i].sigma, frames[i])) {
-    nStates = nBuilt;
-    return false;
-  }
-  haveFrame[i] = true;
-  nBuilt++;
-  return nBuilt < nStates;
+  if (cycAtmos < 0 || cycBuilt >= RPC_CYCLE) return false;
+  int i = cycBuilt;                       // el 0 primero: es el fotograma anclado
+  if (!cyc[i]) cyc[i] = (uint16_t *)RPC_ALLOC((size_t)RPC_W * RPC_H * 2);
+  if (!cyc[i]) { cycBuilt = RPC_CYCLE; return false; }   // sin memoria: se anima con lo que hay
+  float ph = (float)i / (float)RPC_CYCLE;
+  float amp = cycAmp * (0.5f - 0.5f * cosf(6.28318531f * ph));
+  if (!reduceQS(LF, cycAtmos, cycQ, cycSigma, cyc[i], amp, ph)) { cycBuilt = RPC_CYCLE; return false; }
+  cycHave[i] = true;
+  cycBuilt++;
+  return cycBuilt < RPC_CYCLE;
 }
 
 bool rpcBreathFrame(uint16_t *out412, uint32_t now_ms, uint16_t ms_per_frame) {
-  if (nBuilt < 1) return false;
+  if (!cycHave[0]) return false;
   if (ms_per_frame < 1) ms_per_frame = 1;
 
-  // Ciclo a medias: se sostiene el estado central y ya.
-  if (nBuilt < nStates) {
-    if (!haveFrame[midState]) return false;
-    blitN(frames[midState], RPC_W, RPC_H, out412);
-    return true;
+  // Se avanza COMO MUCHO un fotograma por llamada. Antes el indice salia de
+  // now/ms_per_frame, reloj de pared: como el repintado real tarda mucho mas que
+  // un fotograma nominal, el indice saltaba de dos en dos o de tres en tres, y
+  // de forma irregular. Eso es lo que se veia como "salta cada tantos segundos
+  // al azar". Contando fotogramas PINTADOS el paso es siempre uno.
+  if (now_ms - cycLast >= ms_per_frame) {
+    cycLast = now_ms;
+    int n = cycBuilt < RPC_CYCLE ? cycBuilt : RPC_CYCLE;
+    if (n > 0) cycPos = (cycPos + 1) % n;
   }
-
-  // Ida y vuelta sobre [playLo, playHi]. Con n estados el ciclo tiene 2n-2
-  // fotogramas: los extremos NO se repiten, o la respiracion se queda plana en
-  // las puntas, que es justo donde se nota.
-  int n = playHi - playLo + 1;
-  if (n < 1) return false;
-  int span = n > 1 ? (n - 1) * 2 : 1;
-  uint32_t k = (now_ms / ms_per_frame) % (uint32_t)span;
-  int i = (int)k;
-  if (i >= n) i = span - i;
-  blitN(frames[playLo + i], RPC_W, RPC_H, out412);
+  int i = cycPos;
+  if (!cycHave[i]) i = 0;
+  blitN(cyc[i], RPC_W, RPC_H, out412);
   return true;
 }
